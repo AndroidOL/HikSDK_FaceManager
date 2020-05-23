@@ -1,0 +1,15 @@
+E:\Visual Studio\海康威视\HK_Face\HK_Face\bin\Debug\net45\HK_Face.exe.config
+E:\Visual Studio\海康威视\HK_Face\HK_Face\bin\Debug\net45\HK_Face.exe
+E:\Visual Studio\海康威视\HK_Face\HK_Face\bin\Debug\net45\HK_Face.pdb
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.csprojAssemblyReference.cache
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\MainWindow.g.cs
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\App.g.cs
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face_MarkupCompile.cache
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face_MarkupCompile.lref
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\MainWindow.baml
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.g.resources
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.csproj.CoreCompileInputs.cache
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.AssemblyInfoInputs.cache
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.AssemblyInfo.cs
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.exe
+E:\Visual Studio\海康威视\HK_Face\HK_Face\obj\Debug\net45\HK_Face.pdb
