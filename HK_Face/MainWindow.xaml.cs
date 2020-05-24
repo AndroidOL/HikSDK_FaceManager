@@ -16,6 +16,8 @@ using System.Windows.Shapes;
 using System.Runtime.InteropServices;
 using System.Windows.Controls.Ribbon;
 using System.Runtime.InteropServices.WindowsRuntime;
+using WebServicePark;
+using System.IO;
 
 namespace HK_Face {
     class cListItem {
@@ -67,6 +69,25 @@ namespace HK_Face {
             HikAbilityList.Items.Add (new cListItem (CHCNetSDK.PIC_CAPTURE_ABILITY, "获取图片能力"));
             HikAbilityList.Items.Add (new cListItem (CHCNetSDK.ACS_ABILITY, "门禁能力集"));
         }
+
+        private void custom_SynjonesServiceStart () {
+            CPublic.AppPath = @".\";
+            CPublic.LogPath = CPublic.AppPath + "Log\\";
+
+            // 获取 TPE 网络状态
+            string[] TPE_NetStatus = {
+                "建立连接中",
+                "与中心同步中",
+                "连接已经建立"
+            };
+            int nRet = TPE_Class.TPE_GetNetState ();
+            SimpleLogInfo.Text += "正在获取网络状态：" + TPE_NetStatus[nRet - 1] + "\n";
+            if (nRet != 3) {
+                // 启动 TPE 服务
+                TPE_Class.TPE_StartTPE ();
+                SimpleLogInfo.Text += "正在启动 TPE：" + TPE_NetStatus[nRet - 1] + "\n";
+            } else { SimpleLogInfo.Text += "TPE 已成功启动！"; }
+        }
         public MainWindow () {
             InitializeComponent ();
             custom_InitComboBoxItems ();
@@ -79,6 +100,75 @@ namespace HK_Face {
             }
             // 清理 SDK  资源
             CHCNetSDK.NET_DVR_Cleanup ();
+        }
+
+        private void SynjonesStart_Click (object sender, RoutedEventArgs e) {
+            custom_SynjonesServiceStart ();
+        }
+
+        private void SynjonesExport_Click (object sender, RoutedEventArgs e) {
+            int nRet = TPE_Class.TPE_GetNetState ();
+            if (nRet == 3) {
+                tagTPE_QueryStdAccountReq Req = new tagTPE_QueryStdAccountReq();
+                tagTPE_QueryResControl ResControl = new tagTPE_QueryResControl ();
+                Req.reqflagAccountNoRange = 1;
+                Req.AccountNoRange = new int[] { Convert.ToInt32 (100000), Convert.ToInt32 (1599999) };
+                Req.resflagName = 1;
+                Req.resflagCardNo = 1;
+                Req.resflagDepart = 1;
+                Req.resflagPersonID = 1;
+                Req.resflagCertCode = 1;
+                nRet = TPE_Class.TPE_QueryStdAccount (1, ref Req, out ResControl, 1);
+                if (nRet == 0 && ResControl.ResRecCount != 0) {
+                    // 输出数据
+                    using (StreamWriter AccountImport = new StreamWriter(@".\Account.csv", false, Encoding.GetEncoding("GB2312"))) {
+                        // 写入标题
+                        if (HikVersion.SelectedIndex != 1) {
+                            AccountImport.WriteLine ("规则：, \n, 1.带 * 的为必填项。,\n, 2.性别 1:男 2:女,\n, 3.证件类型 1:身份证 2:学生证 3:军官证 4:港澳通行证 5:驾驶证 6:护照 7:其他证件,\n, 4.学历 1:初中 2:高中 / 专科 3:本科 4:硕士 5:博士,\n, 5.设备操作权限 1:普通用户 2:管理员,\n, 6.日期格式:年 / 月 / 日,\n, 7.请使用‘；’分隔卡号,\n, 8.f1~f10依次表示从左手小拇指到右手小拇指指纹数据。,\n, 9.f1card~f10card依次表示从左手小拇指到右手小拇指指纹数据关联的卡号。");
+                            AccountImport.WriteLine ("*人员编号,*组织,*人员姓名,*性别,证件类型,证件号码,出生日期,联系电话,职务,住址,电子邮件,国家,城市,学历,设备操作权限,雇佣开始日期,雇佣结束日期,卡号,f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f1card,f2card,f3card,f4card,f5card,f6card,f7card,f8card,f9card,f10card");
+                        } else { AccountImport.WriteLine ("*人员编号,*组织名称,*人员名称,*性别,联系方式,邮箱,生效时间,失效时间,卡号,房间号,身份证"); }
+                        SimpleLogInfo.Text += "标准批量调账成功，总计返回结果" + ResControl.ResRecCount + "条！";
+                        tagTPE_GetAccountRes AccRes = new tagTPE_GetAccountRes ();
+                        TPE_GetAccountRes tpe_GetAccRes;
+                        IntPtr buffer;
+                        unsafe {
+                            for (int i = 0; i < ResControl.ResRecCount; i++) {
+                                buffer = (IntPtr)((Byte*)(ResControl.pRes) + i * Marshal.SizeOf (AccRes));
+                                AccRes = (tagTPE_GetAccountRes)Marshal.PtrToStructure (buffer, typeof (tagTPE_GetAccountRes));
+                                tpe_GetAccRes = new TPE_GetAccountRes (AccRes);
+                                // 0 - 帐号
+                                // 1 - 姓名
+                                // 2 - 性别：身份证17位 % 2 == 0
+                                byte isMale;
+                                // 4 - 生日：身份证 5-9 10-11 12-13
+                                string birthday = "1970-01-01";
+                                if (string.IsNullOrEmpty (tpe_GetAccRes.PersonID) || tpe_GetAccRes.PersonID.Length != 18) {
+                                    isMale = 1;
+                                    tpe_GetAccRes.PersonID = "000000000000000000";
+                                } else {
+                                    birthday = tpe_GetAccRes.PersonID.Substring (6, 4) + "/" + tpe_GetAccRes.PersonID.Substring (10, 2) + "/" + tpe_GetAccRes.PersonID.Substring (12, 2);
+                                    isMale = (byte)((int.Parse (tpe_GetAccRes.PersonID[16].ToString ()) % 2 == 0) ? 0x02 : 0x01);
+                                }
+                                // 3 - 身份证或工号
+                                // 5 - string.IsNullOrEmpty(Tel) ? 工号 : Tel
+                                // 6 - 电子邮件
+                                // 7 - 卡号
+                                if (HikVersion.SelectedIndex != 1) {
+                                    AccountImport.WriteLine (string.Format("{0},证件卡,{1},{2},1,{3},{4},{5},,,{6},中国,,,1,,,{7},,,,,,,,,,,,,,,,,,,,",tpe_GetAccRes.AccountNo, tpe_GetAccRes.Name + tpe_GetAccRes.PersonID.Substring(14, 4),
+                                                                                                                                                          isMale, tpe_GetAccRes.PersonID, birthday,
+                                                                                                                                                          string.IsNullOrEmpty(tpe_GetAccRes.Tel) ? tpe_GetAccRes.CertCode : tpe_GetAccRes.Tel,
+                                                                                                                                                          tpe_GetAccRes.Email, tpe_GetAccRes.CardNo));
+                                } else {
+                                    AccountImport.WriteLine (string.Format("{0},证件卡,{1},{2},{3},{4},2020/01/01,2099/12/31,{5},,{6}", tpe_GetAccRes.AccountNo, tpe_GetAccRes.Name, isMale,
+                                                                                                                                                       string.IsNullOrEmpty (tpe_GetAccRes.Tel) ? tpe_GetAccRes.CertCode : tpe_GetAccRes.Tel,
+                                                                                                                                                       tpe_GetAccRes.Email, tpe_GetAccRes.CardNo, tpe_GetAccRes.PersonID));
+                                }
+                            }
+                            ResControl.pRes = null;
+                        }
+                    }
+                } else { SimpleLogInfo.Text += "标准批量调账失败或没有返回结果！"; }
+            } else { SimpleLogInfo.Text += "TPE 尚未启动！"; }
         }
 
         public static void custom_GetErrorMessage (int iErr) {
@@ -197,7 +287,7 @@ namespace HK_Face {
                     sDeviceAddress = new byte[CHCNetSDK.NET_DVR_DEV_ADDRESS_MAX_LEN],
                     byUseTransport = 0,
                     // 设置登录设备端口
-                    wPort = 8000,
+                    wPort = ushort.Parse(HikLogin_Port.Text),
                     sUserName = new byte[CHCNetSDK.NET_DVR_LOGIN_USERNAME_MAX_LEN],
                     sPassword = new byte[CHCNetSDK.NET_DVR_LOGIN_PASSWD_MAX_LEN],
                     // 是否异步登录：0- 否，1- 是 
@@ -214,12 +304,12 @@ namespace HK_Face {
                     byVerifyMode = 0
                 };
                 // 设置登录设备的 IP 地址
-                byte[] tDeviceAddress = Encoding.ASCII.GetBytes ("10.0.0.254");
+                byte[] tDeviceAddress = Encoding.ASCII.GetBytes (HikLogin_Address.Text);
                 Array.Copy (tDeviceAddress, 0, pLoginInfo.sDeviceAddress, 0, tDeviceAddress.Length);
                 // 设置登录设备的用户名与密码
-                byte[] tUserName = Encoding.ASCII.GetBytes ("user");
+                byte[] tUserName = Encoding.ASCII.GetBytes (HikLogin_Username.Text);
                 Array.Copy (tUserName, 0, pLoginInfo.sUserName, 0, tUserName.Length);
-                byte[] tPassword = Encoding.ASCII.GetBytes ("wellin5401");
+                byte[] tPassword = Encoding.ASCII.GetBytes (HikLogin_Password.Password);
                 Array.Copy (tPassword, 0, pLoginInfo.sPassword, 0, tPassword.Length);
                 CHCNetSDK.NET_DVR_DEVICEINFO_V40 lpDeviceInfo = new CHCNetSDK.NET_DVR_DEVICEINFO_V40 ();
                 lpDeviceInfo.struDeviceV30.sSerialNumber = new byte[CHCNetSDK.SERIALNO_LEN];
