@@ -18,6 +18,7 @@ using System.Windows.Controls.Ribbon;
 using System.Runtime.InteropServices.WindowsRuntime;
 using WebServicePark;
 using System.IO;
+using System.Windows.Threading;
 
 namespace HK_Face {
     class cListItem {
@@ -47,6 +48,11 @@ namespace HK_Face {
     public partial class MainWindow : Window {
         private bool isInitSDK = false;
         private int UserID = -1;
+        bool getSlower = false;
+        bool getFaster = true;
+        int m_GetCardCfgHandle = -1;
+        CHCNetSDK.RemoteConfigCallback m_GetGatewayCardCallback;
+        DispatcherTimer Statup = new DispatcherTimer ();
 
         private void custom_InitComboBoxItems () {
             HikAbilityList.Items.Add (new cListItem (CHCNetSDK.DEVICE_SOFTHARDWARE_ABILITY, "设备软硬件能力"));
@@ -70,27 +76,43 @@ namespace HK_Face {
             HikAbilityList.Items.Add (new cListItem (CHCNetSDK.ACS_ABILITY, "门禁能力集"));
         }
 
+        private void custom_SynjonesStatup (object sender, EventArgs e) {
+            string[] TPE_NetStatus = {
+                "尚未连接",
+                "与中心同步中",
+                "连接已经建立"
+            };
+            int nRet = TPE_Class.TPE_GetNetState ();
+            SynjonesStatup.Content = "TPE 状态：" + TPE_NetStatus[nRet - 1] + "\n";
+            if (nRet == 3 && !getSlower && Statup.Interval != null) {
+                getSlower = true;
+                getFaster = false;
+                Statup.Interval = new TimeSpan (0, 0, 0, 10, 0);
+            } else if (nRet != 3 && !getFaster && Statup.Interval != null) {
+                getSlower = false;
+                getFaster = true;
+                Statup.Interval = new TimeSpan (0, 0, 0, 0, 100);
+            }
+        }
+
         private void custom_SynjonesServiceStart () {
             CPublic.AppPath = @".\";
             CPublic.LogPath = CPublic.AppPath + "Log\\";
 
             // 获取 TPE 网络状态
-            string[] TPE_NetStatus = {
-                "建立连接中",
-                "与中心同步中",
-                "连接已经建立"
-            };
             int nRet = TPE_Class.TPE_GetNetState ();
-            SimpleLogInfo.Text += "正在获取网络状态：" + TPE_NetStatus[nRet - 1] + "\n";
             if (nRet != 3) {
                 // 启动 TPE 服务
                 TPE_Class.TPE_StartTPE ();
-                SimpleLogInfo.Text += "正在启动 TPE：" + TPE_NetStatus[nRet - 1] + "\n";
+                SimpleLogInfo.Text += "TPE 正在启动！";
             } else { SimpleLogInfo.Text += "TPE 已成功启动！"; }
         }
         public MainWindow () {
             InitializeComponent ();
             custom_InitComboBoxItems ();
+            Statup.Tick += new EventHandler (custom_SynjonesStatup);
+            Statup.Interval = new TimeSpan (0, 0, 0, 0, 100);
+            Statup.Start ();
         }
 
         ~MainWindow () {
@@ -109,7 +131,7 @@ namespace HK_Face {
         private void SynjonesExport_Click (object sender, RoutedEventArgs e) {
             int nRet = TPE_Class.TPE_GetNetState ();
             if (nRet == 3) {
-                tagTPE_QueryStdAccountReq Req = new tagTPE_QueryStdAccountReq();
+                tagTPE_QueryStdAccountReq Req = new tagTPE_QueryStdAccountReq ();
                 tagTPE_QueryResControl ResControl = new tagTPE_QueryResControl ();
                 Req.reqflagAccountNoRange = 1;
                 Req.AccountNoRange = new int[] { Convert.ToInt32 (100000), Convert.ToInt32 (1599999) };
@@ -121,7 +143,7 @@ namespace HK_Face {
                 nRet = TPE_Class.TPE_QueryStdAccount (1, ref Req, out ResControl, 1);
                 if (nRet == 0 && ResControl.ResRecCount != 0) {
                     // 输出数据
-                    using (StreamWriter AccountImport = new StreamWriter(@".\Account.csv", false, Encoding.GetEncoding("GB2312"))) {
+                    using (StreamWriter AccountImport = new StreamWriter (@".\Account.csv", false, Encoding.GetEncoding ("GB2312"))) {
                         // 写入标题
                         if (HikVersion.SelectedIndex != 1) {
                             AccountImport.WriteLine ("规则：, \n, 1.带 * 的为必填项。,\n, 2.性别 1:男 2:女,\n, 3.证件类型 1:身份证 2:学生证 3:军官证 4:港澳通行证 5:驾驶证 6:护照 7:其他证件,\n, 4.学历 1:初中 2:高中 / 专科 3:本科 4:硕士 5:博士,\n, 5.设备操作权限 1:普通用户 2:管理员,\n, 6.日期格式:年 / 月 / 日,\n, 7.请使用‘；’分隔卡号,\n, 8.f1~f10依次表示从左手小拇指到右手小拇指指纹数据。,\n, 9.f1card~f10card依次表示从左手小拇指到右手小拇指指纹数据关联的卡号。");
@@ -154,12 +176,12 @@ namespace HK_Face {
                                 // 6 - 电子邮件
                                 // 7 - 卡号
                                 if (HikVersion.SelectedIndex != 1) {
-                                    AccountImport.WriteLine (string.Format("{0},证件卡,{1},{2},1,{3},{4},{5},,,{6},中国,,,1,,,{7},,,,,,,,,,,,,,,,,,,,",tpe_GetAccRes.AccountNo, tpe_GetAccRes.Name + tpe_GetAccRes.PersonID.Substring(14, 4),
+                                    AccountImport.WriteLine (string.Format ("{0},证件卡,{1},{2},1,{3},{4},{5},,,{6},中国,,,1,,,{7},,,,,,,,,,,,,,,,,,,,", tpe_GetAccRes.AccountNo, tpe_GetAccRes.Name + tpe_GetAccRes.PersonID.Substring (14, 4),
                                                                                                                                                           isMale, tpe_GetAccRes.PersonID, birthday,
-                                                                                                                                                          string.IsNullOrEmpty(tpe_GetAccRes.Tel) ? tpe_GetAccRes.CertCode : tpe_GetAccRes.Tel,
+                                                                                                                                                          string.IsNullOrEmpty (tpe_GetAccRes.Tel) ? tpe_GetAccRes.CertCode : tpe_GetAccRes.Tel,
                                                                                                                                                           tpe_GetAccRes.Email, tpe_GetAccRes.CardNo));
                                 } else {
-                                    AccountImport.WriteLine (string.Format("{0},证件卡,{1},{2},{3},{4},2020/01/01,2099/12/31,{5},,{6}", tpe_GetAccRes.AccountNo, tpe_GetAccRes.Name, isMale,
+                                    AccountImport.WriteLine (string.Format ("{0},证件卡,{1},{2},{3},{4},2020/01/01,2099/12/31,{5},,{6}", tpe_GetAccRes.AccountNo, tpe_GetAccRes.Name, isMale,
                                                                                                                                                        string.IsNullOrEmpty (tpe_GetAccRes.Tel) ? tpe_GetAccRes.CertCode : tpe_GetAccRes.Tel,
                                                                                                                                                        tpe_GetAccRes.Email, tpe_GetAccRes.CardNo, tpe_GetAccRes.PersonID));
                                 }
@@ -274,7 +296,7 @@ namespace HK_Face {
         }
 
         private void HikGetDevice_Click (object sender, RoutedEventArgs e) {
-            cListItem curSelected = (cListItem) HikAbilityList.SelectedItem;
+            cListItem curSelected = (cListItem)HikAbilityList.SelectedItem;
             if (curSelected == null) {
                 SimpleLogInfo.Text = "未选择\n";
             } else { SimpleLogInfo.Text = curSelected.ID + "\n"; }
@@ -287,7 +309,7 @@ namespace HK_Face {
                     sDeviceAddress = new byte[CHCNetSDK.NET_DVR_DEV_ADDRESS_MAX_LEN],
                     byUseTransport = 0,
                     // 设置登录设备端口
-                    wPort = ushort.Parse(HikLogin_Port.Text),
+                    wPort = ushort.Parse (HikLogin_Port.Text),
                     sUserName = new byte[CHCNetSDK.NET_DVR_LOGIN_USERNAME_MAX_LEN],
                     sPassword = new byte[CHCNetSDK.NET_DVR_LOGIN_PASSWD_MAX_LEN],
                     // 是否异步登录：0- 否，1- 是 
@@ -309,7 +331,8 @@ namespace HK_Face {
                 // 设置登录设备的用户名与密码
                 byte[] tUserName = Encoding.ASCII.GetBytes (HikLogin_Username.Text);
                 Array.Copy (tUserName, 0, pLoginInfo.sUserName, 0, tUserName.Length);
-                byte[] tPassword = Encoding.ASCII.GetBytes (HikLogin_Password.Password);
+                string sPassword = HikLogin_Password.Password.Length == 0 ? "wellin5401" : HikLogin_Password.Password;
+                byte[] tPassword = Encoding.ASCII.GetBytes (sPassword);
                 Array.Copy (tPassword, 0, pLoginInfo.sPassword, 0, tPassword.Length);
                 CHCNetSDK.NET_DVR_DEVICEINFO_V40 lpDeviceInfo = new CHCNetSDK.NET_DVR_DEVICEINFO_V40 ();
                 lpDeviceInfo.struDeviceV30.sSerialNumber = new byte[CHCNetSDK.SERIALNO_LEN];
@@ -330,13 +353,13 @@ namespace HK_Face {
             } else { SimpleLogInfo.Text += "用户序号" + UserID.ToString () + "登陆成功！（请勿重复登陆）\n"; }
         }
 
-        private void custom_GetDeviceAbility(int LocalUserID, uint dwAbilityType, int channelNo) {
+        private void custom_GetDeviceAbility (int LocalUserID, uint dwAbilityType, int channelNo) {
             string channel = channelNo.ToString ();
             IntPtr pInBuf;
             int nSize;
             string dwAbilityName;
 
-            string xmlInput = "<?xml version='1.0' encoding='utf-8'?>";
+            string xmlInput = "";// = "<?xml version='1.0' encoding='utf-8'?>";
             switch (dwAbilityType) {
                 case CHCNetSDK.DEVICE_SOFTHARDWARE_ABILITY:     // 设备软硬件能力
                     dwAbilityName = "设备软硬件能力";
@@ -357,73 +380,73 @@ namespace HK_Face {
                     break;
                 case CHCNetSDK.DEVICE_ALARM_ABILITY:             // 获取设备报警能力
                     dwAbilityName = "获取设备报警能力";
-                    xmlInput += "<AlarmAbility version='2.0'><channelID>" + channel + "</channelID></AlarmAbility>";
+                    xmlInput += "<AlarmAbility version=\"2.0\"><channelID>" + channel + "</channelID></AlarmAbility>";
                     break;
                 case CHCNetSDK.DEVICE_DYNCHAN_ABILITY:          // 获取设备数字通道能力
                     dwAbilityName = "获取设备数字通道能力";
-                    xmlInput += "<DynChannelAbility version='2.0'><channelNO>" + channel + "</channelNO></DynChannelAbility>";
+                    xmlInput += "<DynChannelAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></DynChannelAbility>";
                     break;
                 case CHCNetSDK.DEVICE_USER_ABILITY:             // 获取设备用户管理参数能力
                     dwAbilityName = "获取设备用户管理参数能力";
-                    xmlInput += "<UserAbility version='2.0'></UserAbility>";
+                    xmlInput += "<UserAbility version=\"2.0\">\r\n</UserAbility>";
                     break;
                 case CHCNetSDK.DEVICE_NETAPP_ABILITY:           // 获取设备网络应用参数能力
                     dwAbilityName = "获取设备网络应用参数能力";
-                    xmlInput += "<NetAppAbility version='2.0'></NetAppAbility>";
+                    xmlInput += "<NetAppAbility version=\"2.0\">\r\n</NetAppAbility>";
                     break;
                 case CHCNetSDK.DEVICE_VIDEOPIC_ABILITY:         // 获取设备图像参数能力
                     dwAbilityName = "获取设备图像参数能力";
-                    xmlInput += "<VideoPicAbility version='2.0'><channelNO>" + channel + "</channelNO></VideoPicAbility> ";
+                    xmlInput += "<VideoPicAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></VideoPicAbility> ";
                     break;
                 case CHCNetSDK.DEVICE_JPEG_CAP_ABILITY:         // 获取设备JPEG抓图能力
                     dwAbilityName = "获取设备JPEG抓图能力";
-                    xmlInput += "<JpegCaptureAbility version='2.0'><channelNO>" + channel + "</channelNO></JpegCaptureAbility> ";
+                    xmlInput += "<JpegCaptureAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></JpegCaptureAbility> ";
                     break;
                 case CHCNetSDK.DEVICE_SERIAL_ABILITY:           // 获取设备RS232和RS485串口能力
                     dwAbilityName = "获取设备RS232和RS485串口能力";
-                    xmlInput += "<SerialAbility version='2.0'><subBoardNo>" + channel + "</subBoardNo></SerialAbility>";
+                    xmlInput += "<SerialAbility version=\"2.0\"><subBoardNo>" + channel + "</subBoardNo></SerialAbility>";
                     break;
                 case CHCNetSDK.DEVICE_ABILITY_INFO:             // 设备通用能力类型，具体能力根据发送的能力节点来区分
                     dwAbilityName = "设备通用能力类型";
                     List<string> Ability = new List<string> {
-                        "<PTZAbility version='2.0'><channelNO>" + channel + "</channelNO></PTZAbility>",          //获取PTZ能力集
-                        "<EventAbility version='2.0'><channelNO>" + channel + "</channelNO></EventAbility>",      //获取报警事件处理能力集
-                        "<ROIAbility version='2.0'><channelNO>" + channel + "</channelNO></ROIAbility>",          //获取ROI能力集
-                        "<RecordAbility version='2.0'></RecordAbility>",                                          //获取录像相关能力集
-                        "<GetAccessDeviceChannelAbility version='2.0'></GetAccessDeviceChannelAbility>",          //NVR前端待接入设备通道能力集
-                        "<PreviewSwitchAbility version='2.0'></PreviewSwitchAbility>",                            //获取设备本地预览切换能力集
-                        "<NPlusOneAbility version='2.0'></NPlusOneAbility>",                                      //获取设备N+1能力集
-                        "<HardDiskAbility version='2.0'></HardDiskAbility>",                                      //获取设备磁盘相关能力集
-                        "<IPAccessConfigFileAbility version='2.0'></IPAccessConfigFileAbility>",                  //获取IPC配置文件导入导出能力集
-                        "<ChannelInputAbility version='2.0'><channelNO>" + channel + "</channelNO></ChannelInputAbility>",                //获取设备通道输入能力集
-                        "<CameraParaDynamicAbility version='2.0'><channelNO>" + channel + "</channelNO><ExposureSetDynamicLinkTo><WDR><WDREnable>2</WDREnable></WDR><IrisMode><IrisType>0</IrisType></IrisMode></ExposureSetDynamicLinkTo><AudioVideoCompressInfoDynamicLinkTo></AudioVideoCompressInfoDynamicLinkTo><VbrAverageCapDynamicLinkTo><streamType></streamType><codeType></codeType><videoQualityControlType></videoQualityControlType><vbrUpperCap></vbrUpperCap></VbrAverageCapDynamicLinkTo></CameraParaDynamicAbility>",    //获取前端参数动态能力集
-                        "<AlarmTriggerRecordAbility version='2.0'><channelNO>" + channel + "</channelNO></AlarmTriggerRecordAbility>",    //获取报警触发录像能力集
-                        "<GBT28181AccessAbility version='2.0'><channelNO>" + channel + "</channelNO></GBT28181AccessAbility>",            //获取GB/T28181能力集
-                        "<IOAbility version='2.0'><channelNO>" + channel + "</channelNO></IOAbility>",            //获取IO口输入输出能力集
-                        "<AccessProtocolAbility version='2.0'><channelNO>" + channel + "</channelNO></AccessProtocolAbility>",    //获取协议接入能力集
-                        "<SecurityAbility version='2.0'><channelNO>" + channel + "</channelNO></SecurityAbility>",                //获取安全认证配置能力集
-                        "<CameraMountAbility  version='2.0'><channelNO>" + channel + "</channelNO></CameraMountAbility>",         //获取摄像机架设参数能力集
+                        "<PTZAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></PTZAbility>",          //获取PTZ能力集
+                        "<EventAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></EventAbility>",      //获取报警事件处理能力集
+                        "<ROIAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></ROIAbility>",          //获取ROI能力集
+                        "<RecordAbility version=\"2.0\">\r\n</RecordAbility>",                                          //获取录像相关能力集
+                        "<GetAccessDeviceChannelAbility version=\"2.0\">\r\n</GetAccessDeviceChannelAbility>",          //NVR前端待接入设备通道能力集
+                        "<PreviewSwitchAbility version=\"2.0\">\r\n</PreviewSwitchAbility>",                            //获取设备本地预览切换能力集
+                        "<NPlusOneAbility version=\"2.0\">\r\n</NPlusOneAbility>",                                      //获取设备N+1能力集
+                        "<HardDiskAbility version=\"2.0\">\r\n</HardDiskAbility>",                                      //获取设备磁盘相关能力集
+                        "<IPAccessConfigFileAbility version=\"2.0\">\r\n</IPAccessConfigFileAbility>",                  //获取IPC配置文件导入导出能力集
+                        "<ChannelInputAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></ChannelInputAbility>",                //获取设备通道输入能力集
+                        "<CameraParaDynamicAbility version=\"2.0\"><channelNO>" + channel + "</channelNO><ExposureSetDynamicLinkTo><WDR><WDREnable>2</WDREnable></WDR><IrisMode><IrisType>0</IrisType></IrisMode></ExposureSetDynamicLinkTo><AudioVideoCompressInfoDynamicLinkTo></AudioVideoCompressInfoDynamicLinkTo><VbrAverageCapDynamicLinkTo><streamType></streamType><codeType></codeType><videoQualityControlType></videoQualityControlType><vbrUpperCap></vbrUpperCap></VbrAverageCapDynamicLinkTo></CameraParaDynamicAbility>",    //获取前端参数动态能力集
+                        "<AlarmTriggerRecordAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></AlarmTriggerRecordAbility>",    //获取报警触发录像能力集
+                        "<GBT28181AccessAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></GBT28181AccessAbility>",            //获取GB/T28181能力集
+                        "<IOAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></IOAbility>",            //获取IO口输入输出能力集
+                        "<AccessProtocolAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></AccessProtocolAbility>",    //获取协议接入能力集
+                        "<SecurityAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></SecurityAbility>",                //获取安全认证配置能力集
+                        "<CameraMountAbility  version=\"2.0\"><channelNO>" + channel + "</channelNO></CameraMountAbility>",         //获取摄像机架设参数能力集
                         "<SearchLogAbility version= '2.0'><channelNO>" + channel + "</channelNO></SearchLogAbility>",             //获取日志搜索能力集
-                        "<CVRAbility version='2.0'></CVRAbility>",                                                //获取CVR设备能力集
-                        "<ImageDisplayParamAbility version='2.0'><channelNO>" + channel + "</channelNO></ImageDisplayParamAbility>",      //获取图像显示参数能力集
-                        "<VcaDevAbility version='2.0'></VcaDevAbility>",                                          //获取智能设备能力集
-                        "<VcaCtrlAbility version='2.0'><channelNO>" + channel + "</channelNO></VcaCtrlAbility>",  //获取智能通道控制能力集
-                        "<VcaChanAbility version='2.0'><channelNO>" + channel + "</channelNO></VcaChanAbility>",  //获取智能通道分析能力集
-                        "<BinocularAbility version='2.0'><channelNO>" + channel + "</channelNO></BinocularAbility>"             //获取双目能力集
+                        "<CVRAbility version=\"2.0\">\r\n</CVRAbility>",                                                //获取CVR设备能力集
+                        "<ImageDisplayParamAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></ImageDisplayParamAbility>",      //获取图像显示参数能力集
+                        "<VcaDevAbility version=\"2.0\">\r\n</VcaDevAbility>",                                          //获取智能设备能力集
+                        "<VcaCtrlAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></VcaCtrlAbility>",  //获取智能通道控制能力集
+                        "<VcaChanAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></VcaChanAbility>",  //获取智能通道分析能力集
+                        "<BinocularAbility version=\"2.0\"><channelNO>" + channel + "</channelNO></BinocularAbility>"             //获取双目能力集
                     };
                     Random RandomAbility = new Random ();
                     xmlInput += Ability[RandomAbility.Next (Ability.Count)];
                     break;
                 case CHCNetSDK.STREAM_ABILITY:                  // 获取设备流能力
                     dwAbilityName = "获取设备流能力";
-                    xmlInput += "<StreamAbility version='2.0'></StreamAbility> ";
+                    xmlInput += "<StreamAbility version=\"2.0\">\r\n</StreamAbility> ";
                     break;
                 case CHCNetSDK.MATRIXDECODER_ABILITY:           // 获取多路解码器显示、解码能力
                     dwAbilityName = "获取多路解码器显示、解码能力";
                     break;
                 case CHCNetSDK.DECODER_ABILITY:                 // 获取解码器XML能力集
                     dwAbilityName = "获取解码器XML能力集";
-                    xmlInput += "<DecoderAbility version='2.0'></DecoderAbility>";
+                    xmlInput += "<DecoderAbility version=\"2.0\">\r\n</DecoderAbility>";
                     break;
                 case CHCNetSDK.SNAPCAMERA_ABILITY:              // 获取智能交通摄像机的能力
                     dwAbilityName = "获取智能交通摄像机的能力";
@@ -434,13 +457,13 @@ namespace HK_Face {
                     break;
                 case CHCNetSDK.ACS_ABILITY:                     // 门禁能力集
                     dwAbilityName = "门禁能力集";
-                    xmlInput += "<AcsAbility version='2.0'></AcsAbility>";
+                    xmlInput += "<AcsAbility version=\"2.0\">\r\n</AcsAbility>";
                     break;
                 default:
                     dwAbilityName = "未知类型";
                     break;
             }
-            if (string.IsNullOrEmpty(xmlInput.Replace ("<?xml version='1.0' encoding='utf-8'?>", ""))) {
+            if (string.IsNullOrEmpty (xmlInput)) { // .Replace ("<?xml version='1.0' encoding='utf-8'?>", "")
                 pInBuf = IntPtr.Zero;
                 nSize = 0;
             } else {
@@ -561,6 +584,103 @@ namespace HK_Face {
                     }
                 }
             } else { SimpleLogInfo.Text += "您当前尚未登陆！\n"; }
+        }
+        //protected override void WndProc (ref Message m) {
+
+        //}
+        private void UpdateUI (CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg) {
+            SimpleLogInfo.Text += Encoding.GetEncoding("gb2312").GetString (struCardCfg.byName) + ": " + Encoding.UTF8.GetString (struCardCfg.byCardNo) + "\n";
+        }
+        private void custom_ProcessGetGatewayCardCallback (uint dwType, IntPtr lpBuffer, uint dwBufLen, IntPtr pUserData) {
+            if (pUserData == null) {
+                return;
+            } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_DATA) {
+                CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
+                struCardCfg = (CHCNetSDK.NET_DVR_CARD_CFG_V50)Marshal.PtrToStructure (lpBuffer, typeof (CHCNetSDK.NET_DVR_CARD_CFG_V50));
+
+                Action<CHCNetSDK.NET_DVR_CARD_CFG_V50> updateAction = new Action<CHCNetSDK.NET_DVR_CARD_CFG_V50> (UpdateUI);
+                SimpleLogInfo.Dispatcher.BeginInvoke (updateAction, struCardCfg);
+            } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_STATUS) {
+                uint dwStatus = (uint)Marshal.ReadInt32 (lpBuffer);
+                if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_SUCCESS) {
+                    //CHCNetSDK.PostMessage (pUserData, 0x0802, 0, 0);
+                } else if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_FAILED) {
+                    byte[] bRawData = new byte[40];//4字节状态 + 4字节错误码 + 32字节卡号
+                    Marshal.Copy (lpBuffer, bRawData, 0, 40);//将非托管内存指针数据复制到数组中
+
+                    byte[] errorb = new byte[4];//4字节错误码
+                    Array.Copy (bRawData, 4, errorb, 0, 4);
+                    int errorCode = BitConverter.ToInt32 (errorb, 0);
+
+                    byte[] byCardNo = new byte[32];//32字节卡号
+                    Array.Copy (bRawData, 8, byCardNo, 0, 32);
+                    string strCardNo = Encoding.ASCII.GetString (byCardNo).TrimEnd ('\0');
+                }
+            }
+        }
+
+        private void HikGetCard_Click (object sender, RoutedEventArgs e) {
+            if (-1 != m_GetCardCfgHandle) {
+                if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle)) {
+                    SimpleLogInfo.Text += "未完成卡句柄" + m_GetCardCfgHandle + "已通知终止！\n";
+                    m_GetCardCfgHandle = -1;
+                }
+            }
+
+            CHCNetSDK.NET_DVR_CARD_CFG_COND struCardCond = new CHCNetSDK.NET_DVR_CARD_CFG_COND ();
+            struCardCond.dwSize = (uint)Marshal.SizeOf (struCardCond);
+            struCardCond.wLocalControllerID = 0x00;
+            struCardCond.dwCardNum = 0xFFFFFFFF;
+            struCardCond.byCheckCardNo = 0x01;
+
+            // 建立回调
+            m_GetGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessGetGatewayCardCallback);
+            IntPtr pUserData = IntPtr.Zero;
+            int dwSize = Marshal.SizeOf (struCardCond);
+            IntPtr ptrCardStruCond = Marshal.AllocHGlobal (dwSize);
+            Marshal.StructureToPtr (struCardCond, ptrCardStruCond, false);
+            m_GetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_GET_CARD_CFG_V50, ptrCardStruCond, dwSize, m_GetGatewayCardCallback, pUserData);
+            if (m_GetCardCfgHandle == -1) {
+                SimpleLogInfo.Text += "建立远程配置已失败，请检查！\n";
+            } else { SimpleLogInfo.Text += "建立远程配置已加载，请注意！\n"; }
+
+            Marshal.FreeHGlobal (ptrCardStruCond);
+        }
+
+        private void HikSetCardAdd_Click (object sender, RoutedEventArgs e) {
+            if (-1 != m_GetCardCfgHandle) {
+                if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle)) {
+                    m_GetCardCfgHandle = -1;
+                }
+            }
+            CHCNetSDK.NET_DVR_CARD_CFG_COND struCond = new CHCNetSDK.NET_DVR_CARD_CFG_COND ();
+            struCond.dwSize = (uint)Marshal.SizeOf (struCond);
+            struCond.dwCardNum = 1;
+
+            int dwSize = Marshal.SizeOf (struCond);
+            IntPtr ptrStruCond = Marshal.AllocHGlobal (dwSize);
+            Marshal.StructureToPtr (struCond, ptrStruCond, false);
+            m_GetGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessGetGatewayCardCallback);
+            IntPtr pUserData = IntPtr.Zero;
+            m_GetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_SET_CARD_CFG_V50, ptrStruCond, dwSize, m_GetGatewayCardCallback, pUserData);
+            if (-1 == m_GetCardCfgHandle) {
+                Marshal.FreeHGlobal (ptrStruCond);
+            } else {
+                CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
+
+                dwSize = Marshal.SizeOf (struCardCfg);
+                struCardCfg.dwSize = (uint)dwSize;
+                IntPtr ptrStruCard = Marshal.AllocHGlobal (dwSize);
+                Marshal.StructureToPtr (struCardCfg, ptrStruCard, false);
+                if (!CHCNetSDK.NET_DVR_SendRemoteConfig (m_GetCardCfgHandle, (int)CHCNetSDK.LONG_CFG_SEND_DATA_TYPE_ENUM.ENUM_ACS_SEND_DATA, ptrStruCard, dwSize)) {
+                    Marshal.FreeHGlobal (ptrStruCard);
+                    // string strTemp = null;
+                    // strTemp = string.Format ("Send Failed,CardNO:{0}", System.Text.Encoding.UTF8.GetString (m_struCardInfo.byCardNo).TrimEnd ('\0'));
+                }
+                Marshal.FreeHGlobal (ptrStruCard);
+            }
+
+            Marshal.FreeHGlobal (ptrStruCond);
         }
         private void HikLogout_Click (object sender, RoutedEventArgs e) {
             if (UserID > -1) {

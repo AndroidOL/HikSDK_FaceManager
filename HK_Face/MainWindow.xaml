@@ -10,25 +10,29 @@
         <ScrollViewer Width="650" Height="950" Margin="-225,0,0,0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
             <TextBlock HorizontalAlignment="Stretch" VerticalAlignment="Stretch" TextWrapping="Wrap" Name="SimpleLogInfo"/>
         </ScrollViewer>
-        <Button Content="启动第三方服务" Margin="650,-700,0,0" Width="150" Height="20" Name="SynjonesStart" Click="SynjonesStart_Click"/>
-        <ComboBox Margin="650,-650,0,0" Width="150" Height="20" Name="HikVersion">
+        <Label Content="TPE 状态：" Margin="650,-550,0,0" Width="150" Height="30" BorderThickness="0" Name="SynjonesStatup"/>
+        <Button Content="启动第三方服务" Margin="650,-500,0,0" Width="150" Height="20" Name="SynjonesStart" Click="SynjonesStart_Click"/>
+        <ComboBox Margin="650,-450,0,0" Width="150" Height="20" Name="HikVersion">
             <ComboBoxItem Content="iVMS-4200 2.x" IsSelected="True"/>
             <ComboBoxItem Content="iVMS-4200 3.x"/>
         </ComboBox>
-        <Button Content="导出账户白名单" Margin="650,-600,0,0" Width="150" Height="20" Name="SynjonesExport" Click="SynjonesExport_Click"/>
-        <Button Content="初始化 SDK" Margin="650,0,0,0" Width="150" Height="20" Name="HikInit" Click="HikInit_Click"/>
-        <Button Content="配置 SDK 日志路径" Margin="650,50,0,0" Width="150" Height="20" Name="HikSDKLogCfg" Click="HikSDKLogCfg_Click"/>
-        <Button Content="获取 SDK 监听配置" Margin="650,100,0,0" Width="150" Height="20" Name="HikSDKCfg" Click="HikSDKCfg_Click"/>
-        <Button Content="获取 SDK 版本信息" Margin="650,150,0,0" Width="150" Height="20" Name="HikSDKInfo" Click="HikSDKInfo_Click"/>
-        <Button Content="尝试寻找设备" Margin="650,200,0,0" Width="150" Height="20" Name="HikGetDevice" Click="HikGetDevice_Click"/>
-        <TextBox Text="" Margin="650,250,0,0" Width="150" Height="20" Name="HikLogin_Address"/>
-        <TextBox Text="8000" Margin="650,300,0,0" Width="150" Height="20" Name="HikLogin_Port"/>
-        <TextBox Text="user" Margin="650,350,0,0" Width="150" Height="20" Name="HikLogin_Username"/>
-        <PasswordBox Margin="650,400,0,0" Width="150" Height="20" Name="HikLogin_Password"/>
-        <Button Content="尝试登录设备" Margin="650,450,0,0" Width="150" Height="20" Name="HikLogin" Click="HikLogin_Click"/>
-        <ComboBox Margin="650,500,0,0" Width="150" Height="20" Name="HikAbilityList"/>
-        <Button Content="获取设备能力" Margin="650,550,0,0" Width="150" Height="20" Name="HikAbility" Click="HikAbility_Click"/>
-        <Button Content="获取设备信息" Margin="650,600,0,0" Width="150" Height="20" Name="HikGetConfig" Click="HikGetConfig_Click"/>
-        <Button Content="尝试登出设备" Margin="650,700,0,0" Width="150" Height="20" Name="HikLogout" Click="HikLogout_Click"/>
+        <Button Content="导出账户白名单" Margin="650,-400,0,0" Width="150" Height="20" Name="SynjonesExport" Click="SynjonesExport_Click"/>
+        <Button Content="初始化 SDK" Margin="570,0,0,0" Width="70" Height="20" Name="HikInit" Click="HikInit_Click"/>
+        <Button Content="配置日志" Margin="730,0,0,0" Width="70" Height="20" Name="HikSDKLogCfg" Click="HikSDKLogCfg_Click"/>
+        <Button Content="监听配置" Margin="570,50,0,0" Width="70" Height="20" Name="HikSDKCfg" Click="HikSDKCfg_Click"/>
+        <Button Content="版本信息" Margin="730,50,0,0" Width="70" Height="20" Name="HikSDKInfo" Click="HikSDKInfo_Click"/>
+        <Button Content="尝试寻找设备" Margin="650,100,0,0" Width="150" Height="20" Name="HikGetDevice" Click="HikGetDevice_Click"/>
+        <TextBox Text="192.168.100.159" Margin="650,150,0,0" Width="150" Height="20" Name="HikLogin_Address"/>
+        <TextBox Text="8000" Margin="650,200,0,0" Width="150" Height="20" Name="HikLogin_Port"/>
+        <TextBox Text="admin" Margin="570,250,0,0" Width="70" Height="20" Name="HikLogin_Username"/>
+        <PasswordBox PasswordChar="~" Margin="730,250,0,0" Width="70" Height="20" Name="HikLogin_Password"/>
+        <Button Content="尝试登录设备" Margin="650,300,0,0" Width="150" Height="20" Name="HikLogin" Click="HikLogin_Click"/>
+        <ComboBox Margin="650,350,0,0" Width="150" Height="20" Name="HikAbilityList"/>
+        <Button Content="设备能力" Margin="570,400,0,0" Width="70" Height="20" Name="HikAbility" Click="HikAbility_Click"/>
+        <Button Content="设备信息" Margin="730,400,0,0" Width="70" Height="20" Name="HikGetConfig" Click="HikGetConfig_Click"/>
+        <Button Content="尝试人脸计数" Margin="650,450,0,0" Width="150" Height="20" Name="HikGetCard" Click="HikGetCard_Click"/>
+        <Button Content="新增注册卡" Margin="570,500,0,0" Width="70" Height="20" Name="HikSetCardAdd" Click="HikGetCard_Click"/>
+        <Button Content="合并注册卡" Margin="730,500,0,0" Width="70" Height="20" Name="HikSetCardMix" Click="HikGetCard_Click"/>
+        <Button Content="尝试登出设备" Margin="650,600,0,0" Width="150" Height="20" Name="HikLogout" Click="HikLogout_Click"/>
     </Grid>
 </Window>
