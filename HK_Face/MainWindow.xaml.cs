@@ -4,23 +4,87 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Automation.Provider;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using System.Runtime.InteropServices;
 using System.Windows.Controls.Ribbon;
 using System.Runtime.InteropServices.WindowsRuntime;
 using WebServicePark;
 using System.IO;
 using System.Windows.Threading;
+using System.Collections;
 
 namespace HK_Face {
+    public class Person : IComparable<Person> {
+        private uint acc;
+        public uint AccountNo { get { return acc; } }
+        private string name;
+        private uint card;
+        private string cert;
+        public Person (TPE_GetAccountRes Res) {
+            acc = (uint)Res.AccountNo;
+            name = Res.Name + Res.PersonID.Substring (14, 4).ToUpper ();
+            card = (uint)Res.CardNo;
+            cert = Res.CertCode;
+        }
+        public Person(CHCNetSDK.NET_DVR_CARD_CFG_V50 Res) {
+            acc = Res.dwEmployeeNo;
+            name = Encoding.GetEncoding ("gb2312").GetString (Res.byName).TrimEnd ('\0').ToUpper ();
+            if (!uint.TryParse (Encoding.ASCII.GetString (Res.byCardNo).TrimEnd ('\0'), out card)) {
+                card = 0;
+            }
+            cert = acc.ToString ();
+        }
+        public int CompareTo(Person person) {
+            if (person == null) {
+                return 1;
+            } else if (acc == person.acc) {
+                return 0;
+            } else if (acc > person.acc) {
+                return 1;
+            } else { return -1; }
+            //return acc.CompareTo (person.acc);
+        }
+        //public int Compare(Person A, Person B) {
+        //    return A.acc.CompareTo (B.acc);
+        //}
+        //protected YKT_Person (string AccountNo, string Name, uint CardNo) {
+        //    int accno = 0;
+        //    if (string.IsNullOrEmpty(AccountNo) && int.TryParse(AccountNo, out accno)) {
+        //        acc = accno > 100000 ? "0000000" : accno.ToString ().PadLeft(7, '0');
+        //    } else { acc = "0000000"; }
+
+        //    if (string.IsNullOrEmpty (Name)) {
+        //        name = Name;
+        //    } else { name = "无名氏"; }
+
+        //    if (CardNo > 0) {
+        //        card = CardNo;
+        //    } else { card = 0; }
+        //}
+        public static bool operator < (Person A, Person B) {
+            return A.acc < B.acc;
+        }
+        public static bool operator > (Person A, Person B) {
+            return A.acc > B.acc;
+        }
+        public static bool operator == (Person A, Person B) {
+            return A.acc == B.acc;
+        }
+        public static bool operator != (Person A, Person B) {
+            return A.acc != B.acc;
+        }
+        public override bool Equals (object obj) {
+            if (obj == null) { return false; }
+            if (obj.GetType().Equals(GetType()) == false) { return false; }
+            Person tmp = obj as Person;
+            return acc.Equals (tmp.acc) && name.Equals (tmp.name) && card.Equals (tmp.card);
+        }
+        public override int GetHashCode () {
+            return acc.GetHashCode () + name.GetHashCode () + card.GetHashCode ();
+        }
+        public override string ToString () {
+            return "[" + acc + "]" + name + ": " + card;
+        }
+    }
     class cListItem {
         private string name;
         public string Name {
@@ -53,6 +117,11 @@ namespace HK_Face {
         int m_GetCardCfgHandle = -1;
         CHCNetSDK.RemoteConfigCallback m_GetGatewayCardCallback;
         DispatcherTimer Statup = new DispatcherTimer ();
+
+        // 存储一卡通用户数据
+        private static List<Person> YKTPerson = new List<Person> ();
+        // 存储人脸机用户数据
+        private static List<Person> HikPerson = new List<Person> ();
 
         private void custom_InitComboBoxItems () {
             HikAbilityList.Items.Add (new cListItem (CHCNetSDK.DEVICE_SOFTHARDWARE_ABILITY, "设备软硬件能力"));
@@ -104,8 +173,8 @@ namespace HK_Face {
             if (nRet != 3) {
                 // 启动 TPE 服务
                 TPE_Class.TPE_StartTPE ();
-                SimpleLogInfo.Text += "TPE 正在启动！";
-            } else { SimpleLogInfo.Text += "TPE 已成功启动！"; }
+                SimpleLogInfo.Text += "TPE 正在启动！\n";
+            } else { SimpleLogInfo.Text += "TPE 已成功启动！\n"; }
         }
         public MainWindow () {
             InitializeComponent ();
@@ -138,8 +207,8 @@ namespace HK_Face {
                 Req.resflagName = 1;
                 Req.resflagCardNo = 1;
                 Req.resflagDepart = 1;
-                Req.resflagPersonID = 1;
                 Req.resflagCertCode = 1;
+                Req.resflagPersonID = 1;
                 nRet = TPE_Class.TPE_QueryStdAccount (1, ref Req, out ResControl, 1);
                 if (nRet == 0 && ResControl.ResRecCount != 0) {
                     // 输出数据
@@ -190,7 +259,49 @@ namespace HK_Face {
                         }
                     }
                 } else { SimpleLogInfo.Text += "标准批量调账失败或没有返回结果！"; }
-            } else { SimpleLogInfo.Text += "TPE 尚未启动！"; }
+            } else { SimpleLogInfo.Text += "TPE 尚未启动！\n"; }
+        }
+
+        private void SynjonesLoad_Click (object sender, RoutedEventArgs e) {
+            int nRet = TPE_Class.TPE_GetNetState ();
+            if (nRet == 3) {
+                YKTPerson.Clear ();
+                tagTPE_QueryStdAccountReq Req = new tagTPE_QueryStdAccountReq ();
+                tagTPE_QueryResControl ResControl = new tagTPE_QueryResControl ();
+                Req.reqflagAccountNoRange = 1;
+                Req.AccountNoRange = new int[] { Convert.ToInt32 (100000), Convert.ToInt32 (1599999) };
+                Req.resflagName = 1;
+                Req.resflagCardNo = 1;
+                Req.resflagDepart = 1;
+                Req.resflagCertCode = 1;
+                Req.resflagPersonID = 1;
+                nRet = TPE_Class.TPE_QueryStdAccount (1, ref Req, out ResControl, 1);
+                if (nRet == 0 && ResControl.ResRecCount != 0) {
+                    // 输出数据
+                    tagTPE_GetAccountRes AccRes = new tagTPE_GetAccountRes ();
+                    IntPtr buffer;
+                    unsafe {
+                        for (int i = 0; i < ResControl.ResRecCount; i++) {
+                            buffer = (IntPtr)((Byte*)(ResControl.pRes) + i * Marshal.SizeOf (AccRes));
+                            AccRes = (tagTPE_GetAccountRes)Marshal.PtrToStructure (buffer, typeof (tagTPE_GetAccountRes));
+                            string PersonID = Encoding.ASCII.GetString (AccRes.PersonID).TrimEnd ('\0');
+                            // 设置过滤条件
+                            if (PersonID.Length == 18 && (AccRes.Depart >> 56 == 0x02)) {
+                                YKTPerson.Add (new Person (new TPE_GetAccountRes (AccRes)));
+                            }
+                        }
+                        ResControl.pRes = null;
+                    }
+                    // YKTPerson.Sort ();
+                    YKTPerson.Sort ((A, B) => A.AccountNo.CompareTo (B.AccountNo));
+                    SimpleLogInfo.Text += "标准批量调账成功，总计返回结果" + YKTPerson.Count + "条！\n";
+                } else { SimpleLogInfo.Text += "标准批量调账失败或没有返回结果！\n"; }
+            } else { SimpleLogInfo.Text += "TPE 尚未启动！\n"; }
+        }
+
+        private void SynjonesUnload_Click (object sender, RoutedEventArgs e) {
+            SimpleLogInfo.Text += "当前已经获取" + YKTPerson.Count + "人数据，资源已释放！\n";
+            YKTPerson.Clear ();
         }
 
         public static void custom_GetErrorMessage (int iErr) {
@@ -588,22 +699,35 @@ namespace HK_Face {
         //protected override void WndProc (ref Message m) {
 
         //}
-        private void UpdateUI (CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg) {
-            SimpleLogInfo.Text += Encoding.GetEncoding("gb2312").GetString (struCardCfg.byName) + ": " + Encoding.UTF8.GetString (struCardCfg.byCardNo) + "\n";
+        private void custom_CardEventProcess (int status, CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg) {
+            if (status == 0x0800 && m_GetCardCfgHandle != -1) {
+                m_GetCardCfgHandle = -1;
+                CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle);
+                // HikPerson.Sort ();
+                HikPerson.Sort ((A, B) => A.AccountNo.CompareTo (B.AccountNo));
+                SimpleLogInfo.Text += "标准批量调账成功，总计返回结果" + HikPerson.Count + "条！\n";
+            } else {
+                // uint accno = struCardCfg.dwEmployeeNo;
+                // string name = Encoding.GetEncoding ("gb2312").GetString (struCardCfg.byName).TrimEnd ('\0');
+                // string card = Encoding.ASCII.GetString (struCardCfg.byCardNo).TrimEnd ('\0');
+                // SimpleLogInfo.Text += "["+ accno + "]" + name + ": " + card + "\n";
+                HikPerson.Add (new Person (struCardCfg));
+            }
         }
+        private delegate void CardCallbackDelegate (int status, CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg);
+        private CardCallbackDelegate CardEventProcess;
         private void custom_ProcessGetGatewayCardCallback (uint dwType, IntPtr lpBuffer, uint dwBufLen, IntPtr pUserData) {
+            CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
             if (pUserData == null) {
                 return;
             } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_DATA) {
-                CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
                 struCardCfg = (CHCNetSDK.NET_DVR_CARD_CFG_V50)Marshal.PtrToStructure (lpBuffer, typeof (CHCNetSDK.NET_DVR_CARD_CFG_V50));
 
-                Action<CHCNetSDK.NET_DVR_CARD_CFG_V50> updateAction = new Action<CHCNetSDK.NET_DVR_CARD_CFG_V50> (UpdateUI);
-                SimpleLogInfo.Dispatcher.BeginInvoke (updateAction, struCardCfg);
+                Dispatcher.BeginInvoke (CardEventProcess, 0x0801, struCardCfg);
             } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_STATUS) {
                 uint dwStatus = (uint)Marshal.ReadInt32 (lpBuffer);
                 if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_SUCCESS) {
-                    //CHCNetSDK.PostMessage (pUserData, 0x0802, 0, 0);
+                    Dispatcher.BeginInvoke (CardEventProcess, 0x0800, struCardCfg);
                 } else if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_FAILED) {
                     byte[] bRawData = new byte[40];//4字节状态 + 4字节错误码 + 32字节卡号
                     Marshal.Copy (lpBuffer, bRawData, 0, 40);//将非托管内存指针数据复制到数组中
@@ -615,31 +739,32 @@ namespace HK_Face {
                     byte[] byCardNo = new byte[32];//32字节卡号
                     Array.Copy (bRawData, 8, byCardNo, 0, 32);
                     string strCardNo = Encoding.ASCII.GetString (byCardNo).TrimEnd ('\0');
+                    Dispatcher.BeginInvoke (CardEventProcess, 0x0800, struCardCfg);
                 }
             }
         }
 
         private void HikGetCard_Click (object sender, RoutedEventArgs e) {
+            CardEventProcess = new CardCallbackDelegate (custom_CardEventProcess);
             if (-1 != m_GetCardCfgHandle) {
                 if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle)) {
                     SimpleLogInfo.Text += "未完成卡句柄" + m_GetCardCfgHandle + "已通知终止！\n";
                     m_GetCardCfgHandle = -1;
                 }
             }
-
+            HikPerson.Clear ();
             CHCNetSDK.NET_DVR_CARD_CFG_COND struCardCond = new CHCNetSDK.NET_DVR_CARD_CFG_COND ();
             struCardCond.dwSize = (uint)Marshal.SizeOf (struCardCond);
-            struCardCond.wLocalControllerID = 0x00;
             struCardCond.dwCardNum = 0xFFFFFFFF;
             struCardCond.byCheckCardNo = 0x01;
+            struCardCond.wLocalControllerID = 0x00;
 
-            // 建立回调
-            m_GetGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessGetGatewayCardCallback);
-            IntPtr pUserData = IntPtr.Zero;
             int dwSize = Marshal.SizeOf (struCardCond);
             IntPtr ptrCardStruCond = Marshal.AllocHGlobal (dwSize);
             Marshal.StructureToPtr (struCardCond, ptrCardStruCond, false);
-            m_GetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_GET_CARD_CFG_V50, ptrCardStruCond, dwSize, m_GetGatewayCardCallback, pUserData);
+            // 建立回调
+            m_GetGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessGetGatewayCardCallback);
+            m_GetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_GET_CARD_CFG_V50, ptrCardStruCond, dwSize, m_GetGatewayCardCallback, IntPtr.Zero);
             if (m_GetCardCfgHandle == -1) {
                 SimpleLogInfo.Text += "建立远程配置已失败，请检查！\n";
             } else { SimpleLogInfo.Text += "建立远程配置已加载，请注意！\n"; }
@@ -648,6 +773,49 @@ namespace HK_Face {
         }
 
         private void HikSetCardAdd_Click (object sender, RoutedEventArgs e) {
+            List<Person> addPerson = new List<Person> ();
+            List<Person> updPerson = new List<Person> ();
+            List<Person> delPerson = new List<Person> ();
+
+            int YKT_Count = YKTPerson.Count;
+            int YKT_Count_Curr = 0;
+            int YKT_Count_Offset = 0;
+            int Hik_Count = HikPerson.Count;
+            int Hik_Count_Curr = 0;
+            int Hik_Count_Offset = 0;
+            int Max_Count = (YKT_Count > Hik_Count) ? YKT_Count : Hik_Count;
+            SimpleLogInfo.Text += "L: " + YKT_Count_Curr + "R:" + Hik_Count_Curr + "\n";
+            if (YKT_Count == 0) {
+                return;
+            } else if (Hik_Count == 0) {
+                addPerson = YKTPerson;
+            } else {
+                for (int i = 0; i < Max_Count; i++) {
+                    YKT_Count_Curr = i + YKT_Count_Offset;
+                    Person curr_YKT_Person = YKTPerson[YKT_Count_Curr > (YKT_Count - 1) ? YKT_Count - 1 : YKT_Count_Curr];
+                    Hik_Count_Curr = i + Hik_Count_Offset;
+                    Person curr_Hik_Person = HikPerson[Hik_Count_Curr > (Hik_Count - 1) ? Hik_Count - 1 : Hik_Count_Curr];
+
+                    if (curr_YKT_Person == curr_Hik_Person) {
+                        if (curr_YKT_Person.Equals (curr_Hik_Person)) {
+                            continue;
+                        } else { updPerson.Add (curr_YKT_Person); }
+                    } else {
+                        if (curr_YKT_Person > curr_Hik_Person) {
+                            Hik_Count_Offset++;
+                            delPerson.Add (curr_Hik_Person);
+                        } else if (curr_YKT_Person < curr_Hik_Person) {
+                            YKT_Count_Offset++;
+                            addPerson.Add (curr_YKT_Person);
+                        }
+                    }
+                }
+            }
+            SimpleLogInfo.Text += "新增：" + addPerson.Count + "、更新：" + updPerson.Count + "、删除：" + delPerson.Count + "\n";
+            for (int i = 0; i < updPerson.Count; i++) { SimpleLogInfo.Text += updPerson[i].ToString () + "\n"; }
+        }
+
+        private void HikSetCardAdd1_Click (object sender, RoutedEventArgs e) {
             if (-1 != m_GetCardCfgHandle) {
                 if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle)) {
                     m_GetCardCfgHandle = -1;
@@ -667,6 +835,7 @@ namespace HK_Face {
                 Marshal.FreeHGlobal (ptrStruCond);
             } else {
                 CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
+                //struCardCfg.card
 
                 dwSize = Marshal.SizeOf (struCardCfg);
                 struCardCfg.dwSize = (uint)dwSize;
