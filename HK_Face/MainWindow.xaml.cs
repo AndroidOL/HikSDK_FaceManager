@@ -11,23 +11,31 @@ using WebServicePark;
 using System.IO;
 using System.Windows.Threading;
 using System.Collections;
+using Newtonsoft.Json;
+using System.Drawing;
+using System.Threading;
 
 namespace HK_Face {
     public class Person : IComparable<Person> {
         private uint acc;
         public uint AccountNo { get { return acc; } }
         private string name;
+        public string Name { get { return name; } }
         private uint card;
+        public uint CardNo { get { return card; } }
         private string cert;
+        private uint oldCard;
+        public uint oldCardNo { get { return oldCard; } set { oldCard = value; } }
+
         public Person (TPE_GetAccountRes Res) {
             acc = (uint)Res.AccountNo;
-            name = Res.Name + Res.PersonID.Substring (14, 4).ToUpper ();
+            name = Res.Name + Res.PersonID.Substring (14, 4);
             card = (uint)Res.CardNo;
             cert = Res.CertCode;
         }
         public Person(CHCNetSDK.NET_DVR_CARD_CFG_V50 Res) {
             acc = Res.dwEmployeeNo;
-            name = Encoding.GetEncoding ("gb2312").GetString (Res.byName).TrimEnd ('\0').ToUpper ();
+            name = Encoding.GetEncoding ("gb2312").GetString (Res.byName).TrimEnd ('\0');
             if (!uint.TryParse (Encoding.ASCII.GetString (Res.byCardNo).TrimEnd ('\0'), out card)) {
                 card = 0;
             }
@@ -76,10 +84,10 @@ namespace HK_Face {
             if (obj == null) { return false; }
             if (obj.GetType().Equals(GetType()) == false) { return false; }
             Person tmp = obj as Person;
-            return acc.Equals (tmp.acc) && name.Equals (tmp.name) && card.Equals (tmp.card);
+            return acc.Equals (tmp.acc) && name.ToUpper ().Equals (tmp.name.ToUpper ()) && card.Equals (tmp.card);
         }
         public override int GetHashCode () {
-            return acc.GetHashCode () + name.GetHashCode () + card.GetHashCode ();
+            return acc.GetHashCode () + name.ToUpper ().GetHashCode () + card.GetHashCode ();
         }
         public override string ToString () {
             return "[" + acc + "]" + name + ": " + card;
@@ -115,13 +123,23 @@ namespace HK_Face {
         bool getSlower = false;
         bool getFaster = true;
         int m_GetCardCfgHandle = -1;
+        int m_SetCardCfgHandle = -1;
+        int m_GetFaceCfgHandle = -1;
+        int m_SetFaceCfgHandle = -1;
         CHCNetSDK.RemoteConfigCallback m_GetGatewayCardCallback;
+        CHCNetSDK.RemoteConfigCallback m_SetGatewayCardCallback;
+        CHCNetSDK.RemoteConfigCallback m_GetFaceGatewayCardCallback;
+        CHCNetSDK.RemoteConfigCallback m_SetFaceGatewayCardCallback;
         DispatcherTimer Statup = new DispatcherTimer ();
 
         // 存储一卡通用户数据
         private static List<Person> YKTPerson = new List<Person> ();
         // 存储人脸机用户数据
         private static List<Person> HikPerson = new List<Person> ();
+        // 待处理数据
+        private static List<Person> addPerson = new List<Person> ();
+        private static List<Person> updPerson = new List<Person> ();
+        private static List<Person> delPerson = new List<Person> ();
 
         private void custom_InitComboBoxItems () {
             HikAbilityList.Items.Add (new cListItem (CHCNetSDK.DEVICE_SOFTHARDWARE_ABILITY, "设备软硬件能力"));
@@ -307,7 +325,7 @@ namespace HK_Face {
         public static void custom_GetErrorMessage (int iErr) {
             // 获取错误信息
             IntPtr psErr = CHCNetSDK.NET_DVR_GetErrorMsg (ref iErr);
-            string sErr = System.Runtime.InteropServices.Marshal.PtrToStringAnsi (psErr);
+            string sErr = Marshal.PtrToStringAnsi (psErr);
             throw new Exception (string.Format ("返回错误代码：{0}，错误代码含义：{1}\n", iErr.ToString (), sErr));
         }
 
@@ -659,9 +677,9 @@ namespace HK_Face {
             if (UserID > -1) {
                 if (CHCNetSDK.NET_DVR_GetDVRConfig (UserID, CHCNetSDK.NET_DVR_GET_DEVICECFG_V40, -1, ptrDeviceCfg, (uint)nSize, ref dwReturn)) {
                     myDeviceCfg = (CHCNetSDK.NET_DVR_DEVICECFG_V40)Marshal.PtrToStructure (ptrDeviceCfg, typeof (CHCNetSDK.NET_DVR_DEVICECFG_V40));
-                    SimpleLogInfo.Text += "设备名称：" + Encoding.UTF8.GetString (myDeviceCfg.sDVRName) + "\n";
-                    SimpleLogInfo.Text += "设备型号：" + Encoding.UTF8.GetString (myDeviceCfg.byDevTypeName) + "\n";
-                    SimpleLogInfo.Text += "设备编号：" + Encoding.UTF8.GetString (myDeviceCfg.sSerialNumber) + "\n";
+                    SimpleLogInfo.Text += "设备名称：" + Encoding.UTF8.GetString (myDeviceCfg.sDVRName).TrimEnd ('\0') + "\n";
+                    SimpleLogInfo.Text += "设备型号：" + Encoding.UTF8.GetString (myDeviceCfg.byDevTypeName).TrimEnd ('\0') + "\n";
+                    SimpleLogInfo.Text += "设备编号：" + Encoding.UTF8.GetString (myDeviceCfg.sSerialNumber).TrimEnd ('\0') + "\n";
                     uint[] EdwSoftwareVersion = {
                         // 高8位
                         myDeviceCfg.dwSoftwareVersion >> 24,
@@ -699,7 +717,7 @@ namespace HK_Face {
         //protected override void WndProc (ref Message m) {
 
         //}
-        private void custom_CardEventProcess (int status, CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg) {
+        private void custom_GetCardEventProcess (int status, CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg) {
             if (status == 0x0800 && m_GetCardCfgHandle != -1) {
                 m_GetCardCfgHandle = -1;
                 CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle);
@@ -714,8 +732,8 @@ namespace HK_Face {
                 HikPerson.Add (new Person (struCardCfg));
             }
         }
-        private delegate void CardCallbackDelegate (int status, CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg);
-        private CardCallbackDelegate CardEventProcess;
+        private delegate void GetCardCallbackDelegate (int status, CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg);
+        private GetCardCallbackDelegate GetCardEventProcess;
         private void custom_ProcessGetGatewayCardCallback (uint dwType, IntPtr lpBuffer, uint dwBufLen, IntPtr pUserData) {
             CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
             if (pUserData == null) {
@@ -723,11 +741,11 @@ namespace HK_Face {
             } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_DATA) {
                 struCardCfg = (CHCNetSDK.NET_DVR_CARD_CFG_V50)Marshal.PtrToStructure (lpBuffer, typeof (CHCNetSDK.NET_DVR_CARD_CFG_V50));
 
-                Dispatcher.BeginInvoke (CardEventProcess, 0x0801, struCardCfg);
+                Dispatcher.BeginInvoke (GetCardEventProcess, 0x0801, struCardCfg);
             } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_STATUS) {
                 uint dwStatus = (uint)Marshal.ReadInt32 (lpBuffer);
                 if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_SUCCESS) {
-                    Dispatcher.BeginInvoke (CardEventProcess, 0x0800, struCardCfg);
+                    Dispatcher.BeginInvoke (GetCardEventProcess, 0x0800, struCardCfg);
                 } else if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_FAILED) {
                     byte[] bRawData = new byte[40];//4字节状态 + 4字节错误码 + 32字节卡号
                     Marshal.Copy (lpBuffer, bRawData, 0, 40);//将非托管内存指针数据复制到数组中
@@ -739,13 +757,13 @@ namespace HK_Face {
                     byte[] byCardNo = new byte[32];//32字节卡号
                     Array.Copy (bRawData, 8, byCardNo, 0, 32);
                     string strCardNo = Encoding.ASCII.GetString (byCardNo).TrimEnd ('\0');
-                    Dispatcher.BeginInvoke (CardEventProcess, 0x0800, struCardCfg);
+                    Dispatcher.BeginInvoke (GetCardEventProcess, 0x0800, struCardCfg);
                 }
             }
         }
 
         private void HikGetCard_Click (object sender, RoutedEventArgs e) {
-            CardEventProcess = new CardCallbackDelegate (custom_CardEventProcess);
+            GetCardEventProcess = new GetCardCallbackDelegate (custom_GetCardEventProcess);
             if (-1 != m_GetCardCfgHandle) {
                 if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle)) {
                     SimpleLogInfo.Text += "未完成卡句柄" + m_GetCardCfgHandle + "已通知终止！\n";
@@ -771,85 +789,398 @@ namespace HK_Face {
 
             Marshal.FreeHGlobal (ptrCardStruCond);
         }
-
-        private void HikSetCardAdd_Click (object sender, RoutedEventArgs e) {
-            List<Person> addPerson = new List<Person> ();
-            List<Person> updPerson = new List<Person> ();
-            List<Person> delPerson = new List<Person> ();
-
-            int YKT_Count = YKTPerson.Count;
-            int YKT_Count_Curr = 0;
-            int YKT_Count_Offset = 0;
-            int Hik_Count = HikPerson.Count;
-            int Hik_Count_Curr = 0;
-            int Hik_Count_Offset = 0;
-            int Max_Count = (YKT_Count > Hik_Count) ? YKT_Count : Hik_Count;
-            SimpleLogInfo.Text += "L: " + YKT_Count_Curr + "R:" + Hik_Count_Curr + "\n";
-            if (YKT_Count == 0) {
-                return;
-            } else if (Hik_Count == 0) {
-                addPerson = YKTPerson;
+        private void custom_SetCardEventProcess (int status, int mode) {
+            if (status == 0x0900 && mode == 0x00 && m_SetCardCfgHandle != -1) {
+                SimpleLogInfo.Text += "触发回调成功，应该尝试更新数据";
             } else {
-                for (int i = 0; i < Max_Count; i++) {
-                    YKT_Count_Curr = i + YKT_Count_Offset;
-                    Person curr_YKT_Person = YKTPerson[YKT_Count_Curr > (YKT_Count - 1) ? YKT_Count - 1 : YKT_Count_Curr];
-                    Hik_Count_Curr = i + Hik_Count_Offset;
-                    Person curr_Hik_Person = HikPerson[Hik_Count_Curr > (Hik_Count - 1) ? Hik_Count - 1 : Hik_Count_Curr];
+                SimpleLogInfo.Text += "触发回调成功，应该尝试结束配置";
+            }
+        }
+        private delegate void SetCardCallbackDelegate (int status, int mode);
+        private SetCardCallbackDelegate SetCardEventProcess;
+        private void custom_ProcessSetGatewayCardCallback (uint dwType, IntPtr lpBuffer, uint dwBufLen, IntPtr pUserData) {
+            if (pUserData == null) {
+                return;
+            } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_DATA) {
+                //struCardCfg = (CHCNetSDK.NET_DVR_CARD_CFG_V50)Marshal.PtrToStructure (lpBuffer, typeof (CHCNetSDK.NET_DVR_CARD_CFG_V50));
 
-                    if (curr_YKT_Person == curr_Hik_Person) {
-                        if (curr_YKT_Person.Equals (curr_Hik_Person)) {
-                            continue;
-                        } else { updPerson.Add (curr_YKT_Person); }
+                //Dispatcher.BeginInvoke (SetCardEventProcess, 0x0801, struCardCfg);
+            } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_STATUS) {
+                uint dwStatus = (uint)Marshal.ReadInt32 (lpBuffer);
+                if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_SUCCESS) {
+                    // 判断执行类型
+                    Dispatcher.BeginInvoke (SetCardEventProcess, 0x0900, 0x00);
+                } else if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_FAILED) {
+                    byte[] bRawData = new byte[40];//4字节状态 + 4字节错误码 + 32字节卡号
+                    Marshal.Copy (lpBuffer, bRawData, 0, 40);//将非托管内存指针数据复制到数组中
+
+                    byte[] errorb = new byte[4];//4字节错误码
+                    Array.Copy (bRawData, 4, errorb, 0, 4);
+                    int errorCode = BitConverter.ToInt32 (errorb, 0);
+
+                    byte[] byCardNo = new byte[32];//32字节卡号
+                    Array.Copy (bRawData, 8, byCardNo, 0, 32);
+                    string strCardNo = Encoding.ASCII.GetString (byCardNo).TrimEnd ('\0');
+                    //Dispatcher.BeginInvoke (SetCardEventProcess, 0x0800, struCardCfg);
+                }
+            }
+        }
+        private void custom_CardInfoUpdate (List<Person> people, int mode) {
+            CHCNetSDK.NET_DVR_CARD_CFG_COND struCardCond = new CHCNetSDK.NET_DVR_CARD_CFG_COND ();
+            struCardCond.dwSize = (uint)Marshal.SizeOf (struCardCond);
+            struCardCond.dwCardNum = 0xFFFFFFFF;
+            struCardCond.byCheckCardNo = 0x01;
+            struCardCond.wLocalControllerID = 0x00;
+
+            int dwSize = Marshal.SizeOf (struCardCond);
+            IntPtr ptrCardStruCond = Marshal.AllocHGlobal (dwSize);
+            Marshal.StructureToPtr (struCardCond, ptrCardStruCond, false);
+            // 建立回调
+            m_SetGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessSetGatewayCardCallback);
+            if(mode == 0x02) {
+                for (int i = 0; i < people.Count; i++) {
+                    int wait = 0;
+                    do {
+                        wait++;
+                        Thread.Sleep (0);
+                        m_SetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_SET_CARD_CFG_V50, ptrCardStruCond, dwSize, m_SetGatewayCardCallback, IntPtr.Zero);
+                        SimpleLogInfo.Text += "当前正在配置下发环境：" + m_SetCardCfgHandle + "\n";
+                    } while (wait <= 0xFF && m_SetCardCfgHandle == -1);
+                    if (m_SetCardCfgHandle != -1) {
+                        SimpleLogInfo.Text += "正在准备下发：" + people[i].ToString () + "\n";
+                        CHCNetSDK.NET_DVR_CARD_CFG_V50 newCard = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
+                        newCard.Init ();
+                        uint dwuSize = (uint)Marshal.SizeOf (newCard);
+                        newCard.dwSize = dwuSize;
+                        newCard.dwModifyParamType = 0x00000001;
+                        // 设置卡号
+                        byte[] sCardNo = Encoding.ASCII.GetBytes (people[i].oldCardNo.ToString ());
+                        sCardNo.CopyTo (newCard.byCardNo, 0);
+                        newCard.byCardValid = 0;
+
+                        IntPtr ptrStruCard = Marshal.AllocHGlobal ((int)dwuSize);
+                        Marshal.StructureToPtr (newCard, ptrStruCard, false);
+                        SimpleLogInfo.Text += "发送数据：" + m_SetCardCfgHandle + "+" + (int)CHCNetSDK.LONG_CFG_SEND_DATA_TYPE_ENUM.ENUM_ACS_SEND_DATA + "+" + dwuSize;
+                        if (!CHCNetSDK.NET_DVR_SendRemoteConfig (m_SetCardCfgHandle, (int)CHCNetSDK.LONG_CFG_SEND_DATA_TYPE_ENUM.ENUM_ACS_SEND_DATA, ptrStruCard, dwuSize)) {
+                            Marshal.FreeHGlobal (ptrStruCard);
+                            SimpleLogInfo.Text += string.Format ("新增卡片失败：{0} => {1}\n", Encoding.Default.GetString (newCard.byName).TrimEnd ('\0'), Encoding.ASCII.GetString (newCard.byCardNo).TrimEnd ('\0'));
+                        } else { SimpleLogInfo.Text += string.Format ("新增卡片成功：{0} => {1}\n", Encoding.Default.GetString (newCard.byName).TrimEnd ('\0'), Encoding.ASCII.GetString (newCard.byCardNo).TrimEnd ('\0')); }
+                        Marshal.FreeHGlobal (ptrStruCard);
+                        SimpleLogInfo.Text += "数据下发结束\n";
+                        CHCNetSDK.NET_DVR_StopRemoteConfig (m_SetCardCfgHandle);
                     } else {
-                        if (curr_YKT_Person > curr_Hik_Person) {
-                            Hik_Count_Offset++;
-                            delPerson.Add (curr_Hik_Person);
-                        } else if (curr_YKT_Person < curr_Hik_Person) {
-                            YKT_Count_Offset++;
-                            addPerson.Add (curr_YKT_Person);
+                        try {
+                            // 通过错误代码获取消息内容
+                            custom_GetErrorMessage ((int)CHCNetSDK.NET_DVR_GetLastError ());
+                        } catch (Exception ex) {
+                            SimpleLogInfo.Text += "下发环境配置异常：" + ex.Message + "\n";
                         }
                     }
                 }
             }
-            SimpleLogInfo.Text += "新增：" + addPerson.Count + "、更新：" + updPerson.Count + "、删除：" + delPerson.Count + "\n";
-            for (int i = 0; i < updPerson.Count; i++) { SimpleLogInfo.Text += updPerson[i].ToString () + "\n"; }
-        }
+            for (int i = 0; i < people.Count; i++) {
+                int wait = 0;
+                do {
+                    wait++;
+                    Thread.Sleep (0);
+                    m_SetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_SET_CARD_CFG_V50, ptrCardStruCond, dwSize, m_SetGatewayCardCallback, IntPtr.Zero);
+                    SimpleLogInfo.Text += "当前正在配置下发环境：" + m_SetCardCfgHandle + "\n";
+                } while (wait <= 0xFF && m_SetCardCfgHandle == -1);
+                if (m_SetCardCfgHandle != -1) {
+                    SimpleLogInfo.Text += "正在准备下发：" + people[i].ToString () + "\n";
+                    CHCNetSDK.NET_DVR_CARD_CFG_V50 newCard = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
+                    newCard.Init ();
+                    uint dwuSize = (uint)Marshal.SizeOf (newCard);
+                    newCard.dwSize = dwuSize;
+                    newCard.dwModifyParamType = 0x00000FFF;
+                    // 设置卡号
+                    byte[] sCardNo = Encoding.ASCII.GetBytes (people[i].CardNo.ToString ());
+                    sCardNo.CopyTo (newCard.byCardNo, 0);
+                    byte[] sCardPassword = Encoding.ASCII.GetBytes ("5401");
+                    sCardPassword.CopyTo (newCard.byCardPassword, 0);
+                    byte[] sCardHolder = Encoding.Default.GetBytes (people[i].Name);
+                    sCardHolder.CopyTo (newCard.byName, 0);
+                    newCard.byCardValid = 1;
+                    newCard.struValid.byEnable = 1;
+                    newCard.struValid.struBeginTime.wYear = (ushort)0x7D0;
+                    newCard.struValid.struBeginTime.byMonth = (byte)0x01;
+                    newCard.struValid.struBeginTime.byDay = (byte)0x01;
+                    newCard.struValid.struBeginTime.byHour = (byte)0x00;
+                    newCard.struValid.struBeginTime.byMinute = (byte)0x00;
+                    newCard.struValid.struBeginTime.bySecond = (byte)0x00;
+                    newCard.struValid.struEndTime.wYear = (ushort)0x7F0;
+                    newCard.struValid.struEndTime.byMonth = (byte)0x01;
+                    newCard.struValid.struEndTime.byDay = (byte)0x01;
+                    newCard.struValid.struEndTime.byHour = (byte)0x00;
+                    newCard.struValid.struEndTime.byMinute = (byte)0x00;
+                    newCard.struValid.struEndTime.bySecond = (byte)0x00;
+                    newCard.byCardType = 1;
+                    newCard.byLeaderCard = 1;
+                    newCard.byUserType = 1;
+                    newCard.dwMaxSwipeTime = 0;
+                    newCard.dwEmployeeNo = people[i].AccountNo;
 
-        private void HikSetCardAdd1_Click (object sender, RoutedEventArgs e) {
-            if (-1 != m_GetCardCfgHandle) {
-                if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetCardCfgHandle)) {
-                    m_GetCardCfgHandle = -1;
-                }
-            }
-            CHCNetSDK.NET_DVR_CARD_CFG_COND struCond = new CHCNetSDK.NET_DVR_CARD_CFG_COND ();
-            struCond.dwSize = (uint)Marshal.SizeOf (struCond);
-            struCond.dwCardNum = 1;
-
-            int dwSize = Marshal.SizeOf (struCond);
-            IntPtr ptrStruCond = Marshal.AllocHGlobal (dwSize);
-            Marshal.StructureToPtr (struCond, ptrStruCond, false);
-            m_GetGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessGetGatewayCardCallback);
-            IntPtr pUserData = IntPtr.Zero;
-            m_GetCardCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_SET_CARD_CFG_V50, ptrStruCond, dwSize, m_GetGatewayCardCallback, pUserData);
-            if (-1 == m_GetCardCfgHandle) {
-                Marshal.FreeHGlobal (ptrStruCond);
-            } else {
-                CHCNetSDK.NET_DVR_CARD_CFG_V50 struCardCfg = new CHCNetSDK.NET_DVR_CARD_CFG_V50 ();
-                //struCardCfg.card
-
-                dwSize = Marshal.SizeOf (struCardCfg);
-                struCardCfg.dwSize = (uint)dwSize;
-                IntPtr ptrStruCard = Marshal.AllocHGlobal (dwSize);
-                Marshal.StructureToPtr (struCardCfg, ptrStruCard, false);
-                if (!CHCNetSDK.NET_DVR_SendRemoteConfig (m_GetCardCfgHandle, (int)CHCNetSDK.LONG_CFG_SEND_DATA_TYPE_ENUM.ENUM_ACS_SEND_DATA, ptrStruCard, dwSize)) {
+                    IntPtr ptrStruCard = Marshal.AllocHGlobal ((int)dwuSize);
+                    Marshal.StructureToPtr (newCard, ptrStruCard, false);
+                    SimpleLogInfo.Text += "发送数据：" + m_SetCardCfgHandle + "+" + (int)CHCNetSDK.LONG_CFG_SEND_DATA_TYPE_ENUM.ENUM_ACS_SEND_DATA + "+" + dwuSize;
+                    if (!CHCNetSDK.NET_DVR_SendRemoteConfig (m_SetCardCfgHandle, (int)CHCNetSDK.LONG_CFG_SEND_DATA_TYPE_ENUM.ENUM_ACS_SEND_DATA, ptrStruCard, dwuSize)) {
+                        Marshal.FreeHGlobal (ptrStruCard);
+                        SimpleLogInfo.Text += string.Format ("新增卡片失败：{0} => {1}\n", Encoding.Default.GetString (newCard.byName).TrimEnd ('\0'), Encoding.ASCII.GetString (newCard.byCardNo).TrimEnd ('\0'));
+                    } else { SimpleLogInfo.Text += string.Format ("新增卡片成功：{0} => {1}\n", Encoding.Default.GetString (newCard.byName).TrimEnd ('\0'), Encoding.ASCII.GetString (newCard.byCardNo).TrimEnd ('\0')); }
                     Marshal.FreeHGlobal (ptrStruCard);
-                    // string strTemp = null;
-                    // strTemp = string.Format ("Send Failed,CardNO:{0}", System.Text.Encoding.UTF8.GetString (m_struCardInfo.byCardNo).TrimEnd ('\0'));
+                    SimpleLogInfo.Text += "数据下发结束\n";
+                    CHCNetSDK.NET_DVR_StopRemoteConfig (m_SetCardCfgHandle);
+                } else {
+                    try {
+                        // 通过错误代码获取消息内容
+                        custom_GetErrorMessage ((int)CHCNetSDK.NET_DVR_GetLastError ());
+                    } catch (Exception ex) {
+                        SimpleLogInfo.Text += "下发环境配置异常：" + ex.Message + "\n";
+                    }
                 }
-                Marshal.FreeHGlobal (ptrStruCard);
+            }
+        }
+        private void HikSetCardAdd_Click (object sender, RoutedEventArgs e) {
+            SetCardEventProcess = new SetCardCallbackDelegate (custom_SetCardEventProcess);
+            addPerson.Clear ();
+            updPerson.Clear ();
+            delPerson.Clear ();
+
+            int YKT_Count = YKTPerson.Count;
+            int Hik_Count = HikPerson.Count;
+            int Hik_Count_Curr = 0;
+            int Max_Count = (YKT_Count > Hik_Count) ? YKT_Count : Hik_Count;
+            SimpleLogInfo.Text += "现有一卡通" + YKT_Count + "人、海康" + Hik_Count + "人\n";
+            if (YKT_Count == 0) {
+                return;
+            } else if (Hik_Count == 0) {
+                for (int i = 0; i < YKTPerson.Count; i++) {
+                    addPerson.Add (YKTPerson[i]);
+                }
+            } else {
+                for (int i = 0; i < YKT_Count; i++) {
+                    Person curr_YKT_Person = YKTPerson[i];
+                    if (Hik_Count_Curr < Hik_Count) {
+                        Person curr_Hik_Person = HikPerson[Hik_Count_Curr];
+                        SimpleLogInfo.Text += "一卡通：" + curr_YKT_Person.ToString () + "海康威视：" + curr_Hik_Person.ToString ();
+                        if (curr_YKT_Person == curr_Hik_Person) {
+                            Hik_Count_Curr++;
+                            if (!curr_YKT_Person.Equals (curr_Hik_Person)) {
+                                curr_YKT_Person.oldCardNo = curr_Hik_Person.CardNo;
+                                updPerson.Add (curr_YKT_Person);
+                                SimpleLogInfo.Text += "---数据更新\n";
+                            } else { SimpleLogInfo.Text += "---数据一致\n"; }
+                        } else {
+                            if (curr_YKT_Person < curr_Hik_Person) {
+                                SimpleLogInfo.Text += "---增加一卡通人员\n";
+                                addPerson.Add (curr_YKT_Person);
+                            } else if (curr_YKT_Person > curr_Hik_Person) {
+                                SimpleLogInfo.Text += "---删除海康人员\n";
+                                Hik_Count_Curr++;
+                                delPerson.Add (curr_Hik_Person);
+                            }
+                        }
+                    } else { addPerson.Add (curr_YKT_Person); }
+                }
+            }
+            SimpleLogInfo.Text += "新增：" + addPerson.Count + "、更新：" + updPerson.Count + "、删除：" + delPerson.Count + "\n";
+            // for (int i = 0; i < updPerson.Count; i++) { addPerson.Add(updPerson[i]); }
+
+            if (-1 != m_SetCardCfgHandle) {
+                if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_SetCardCfgHandle)) {
+                    SimpleLogInfo.Text += "未完成卡句柄" + m_SetCardCfgHandle + "已通知终止！\n";
+                    m_SetCardCfgHandle = -1;
+                }
+            }
+            custom_CardInfoUpdate (addPerson, 0x01);
+            custom_CardInfoUpdate (updPerson, 0x02);
+        }
+        private static string custom_GetMD5HashFromFile (string fileName) {
+            try {
+                FileStream file = new FileStream (fileName, FileMode.Open);
+                System.Security.Cryptography.MD5 md5 = new System.Security.Cryptography.MD5CryptoServiceProvider ();
+                byte[] retVal = md5.ComputeHash (file);
+                file.Close ();
+
+                StringBuilder sb = new StringBuilder ();
+                for (int i = 0; i < retVal.Length; i++) {
+                    sb.Append (retVal[i].ToString ("x2"));
+                }
+                return sb.ToString ();
+            } catch (Exception ex) {
+                // throw new Exception ("GetMD5HashFromFile() fail,error:" + ex.Message);
             }
 
-            Marshal.FreeHGlobal (ptrStruCond);
+            return "";
+        }
+        private void custom_Png_Bmp_to_Jpg (string filepath) {
+            DirectoryInfo FaceFolder = new DirectoryInfo (filepath);
+            foreach (FileInfo NextFile in FaceFolder.GetFiles ()) {
+                if ((NextFile.Extension.ToLower ().Equals (".png") || NextFile.Extension.ToLower ().Equals (".bmp"))) {
+                    Image img = Image.FromFile (NextFile.FullName);
+                    // Assumes myImage is the PNG you are converting
+                    using (Bitmap b = new Bitmap (img.Width, img.Height)) {
+                        b.SetResolution (img.HorizontalResolution, img.VerticalResolution);
+
+                        using (var g = Graphics.FromImage (b)) {
+                            g.Clear (Color.White);
+                            g.DrawImageUnscaled (img, 0, 0);
+                        }
+                        b.Save (NextFile.DirectoryName + "\\" + NextFile.Name.Split('.')[0] + ".jpg", System.Drawing.Imaging.ImageFormat.Jpeg);
+                    }
+                    img.Dispose ();
+                    File.Delete (NextFile.FullName);
+                }
+            }
+        }
+        public class FaceParam {
+            [JsonProperty ("FaceName")]
+            public string faceName { get; set; }
+            [JsonProperty ("FileSize")]
+            public long fileSize { get; set; }
+            [JsonProperty ("FileExt")]
+            public string fileExt { get; set; }
+            [JsonProperty ("FileMD5")]
+            public string fileMD5 { get; set; }
+            [JsonProperty ("isNUpdated")]
+            public bool isUpdated { get; set; }
+            [JsonProperty ("CardNo")]
+            public uint cardNo { get; set; }
+            public FaceParam (FileInfo File) {
+                faceName = "";
+                fileSize = 0;
+                fileExt = "";
+                fileMD5 = "";
+                isUpdated = true;
+                if (File != null) {
+                    faceName = File.Name.Split ('.')[0];
+                    fileSize = File.Length;
+                    if (fileSize / 1024 >= 200) { isUpdated = false; }
+                    fileExt = File.Extension.TrimStart ('.').ToLower ();
+                    fileMD5 = custom_GetMD5HashFromFile (File.FullName);
+                }
+            }
+            public void doNotUpdate () {
+                isUpdated = false;
+            }
+            public override bool Equals (object obj) {
+                if (obj == null) { return false; }
+                if (obj.GetType ().Equals (GetType ()) == false) { return false; }
+                FaceParam tmp = obj as FaceParam;
+                return faceName.Equals (tmp.faceName) && fileSize.Equals (tmp.fileSize) && fileMD5.Equals (tmp.fileMD5);
+            }
+            public override int GetHashCode () {
+                return faceName.GetHashCode () + fileSize.GetHashCode () + fileMD5.GetHashCode ();
+            }
+            public override string ToString () {
+                return faceName + "[" + fileExt + "] = " + fileSize / 1024 + " : " + fileMD5;
+            }
+        }
+        private void custom_GetFaceEventProcess (int status, CHCNetSDK.NET_DVR_FACE_PARAM_CFG lpCardCfg) {
+            if (status == 0x0801) {
+                SimpleLogInfo.Text += Encoding.ASCII.GetString(lpCardCfg.byCardNo) + lpCardCfg.dwFaceLen;
+            } else {
+                CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetFaceCfgHandle);
+            }
+        }
+        private delegate void GetFaceCallbackDelegate (int status, CHCNetSDK.NET_DVR_FACE_PARAM_CFG lpCardCfg);
+        private GetFaceCallbackDelegate GetFaceEventProcess;
+        private void custom_ProcessGetFaceGatewayCardCallback (uint dwType, IntPtr lpBuffer, uint dwBufLen, IntPtr pUserData) {
+            if (pUserData == null) {
+                return;
+            } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_DATA) {
+                CHCNetSDK.NET_DVR_FACE_PARAM_CFG lpCardCfg = new CHCNetSDK.NET_DVR_FACE_PARAM_CFG ();
+                lpCardCfg = (CHCNetSDK.NET_DVR_FACE_PARAM_CFG)Marshal.PtrToStructure (lpBuffer, typeof (CHCNetSDK.NET_DVR_FACE_PARAM_CFG));
+                if (1 == lpCardCfg.byEnableCardReader[0]) {
+                    Dispatcher.BeginInvoke (GetFaceEventProcess, 0x0801, lpCardCfg);
+                }
+            } else if (dwType == (uint)CHCNetSDK.NET_SDK_CALLBACK_TYPE.NET_SDK_CALLBACK_TYPE_STATUS) {
+                uint dwStatus = (uint)Marshal.ReadInt32 (lpBuffer);
+                if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_SUCCESS) {
+                    // 判断执行类型
+                    Dispatcher.BeginInvoke (GetFaceEventProcess, 0x0800, 0x00);
+                } else if (dwStatus == (uint)CHCNetSDK.NET_SDK_CALLBACK_STATUS_NORMAL.NET_SDK_CALLBACK_STATUS_FAILED) {
+                    byte[] bRawData = new byte[40];//4字节状态 + 4字节错误码 + 32字节卡号
+                    Marshal.Copy (lpBuffer, bRawData, 0, 40);//将非托管内存指针数据复制到数组中
+
+                    byte[] errorb = new byte[4];//4字节错误码
+                    Array.Copy (bRawData, 4, errorb, 0, 4);
+                    int errorCode = BitConverter.ToInt32 (errorb, 0);
+
+                    byte[] byCardNo = new byte[32];//32字节卡号
+                    Array.Copy (bRawData, 8, byCardNo, 0, 32);
+                    string strCardNo = Encoding.ASCII.GetString (byCardNo).TrimEnd ('\0');
+                    //Dispatcher.BeginInvoke (SetCardEventProcess, 0x0800, struCardCfg);
+                }
+            }
+        }
+        private void custom_GetSetFaceInfo (List<FaceParam> faceList) {
+            CHCNetSDK.NET_DVR_FACE_PARAM_COND struFaceCond = new CHCNetSDK.NET_DVR_FACE_PARAM_COND ();
+            struFaceCond.Init ();
+            struFaceCond.dwSize = (uint)Marshal.SizeOf (struFaceCond);
+            struFaceCond.dwFaceNum = 0xFFFFFFFF;
+            struFaceCond.byFaceID = 0x01;
+            // 设置卡号
+            byte[] sCardNo = Encoding.ASCII.GetBytes (faceList[0].cardNo.ToString ());
+            sCardNo.CopyTo (struFaceCond.byCardNo, 0);
+            struFaceCond.byEnableCardReader[0] = 0x01;
+
+            int dwSize = Marshal.SizeOf (struFaceCond);
+            IntPtr ptrStruCond = Marshal.AllocHGlobal (dwSize);
+            Marshal.StructureToPtr (struFaceCond, ptrStruCond, true);
+            // 建立回调
+            m_GetFaceGatewayCardCallback = new CHCNetSDK.RemoteConfigCallback (custom_ProcessGetFaceGatewayCardCallback);
+            m_GetFaceCfgHandle = CHCNetSDK.NET_DVR_StartRemoteConfig (UserID, CHCNetSDK.NET_DVR_GET_FACE_PARAM_CFG, ptrStruCond, dwSize, m_GetFaceGatewayCardCallback, IntPtr.Zero);
+
+
+        }
+        private void HikCheckFaceImage_click (object sender, RoutedEventArgs e) {
+            GetFaceEventProcess = new GetFaceCallbackDelegate (custom_GetFaceEventProcess);
+            if (-1 != m_GetFaceCfgHandle) {
+                if (CHCNetSDK.NET_DVR_StopRemoteConfig (m_GetFaceCfgHandle)) {
+                    SimpleLogInfo.Text += "未完成卡句柄" + m_GetFaceCfgHandle + "已通知终止！\n";
+                    m_GetFaceCfgHandle = -1;
+                }
+            }
+            List<FaceParam> FaceList = new List<FaceParam> ();
+            List<FaceParam> FaceSave = new List<FaceParam> ();
+            DirectoryInfo FaceFolder = new DirectoryInfo (@".\Face\");
+            custom_Png_Bmp_to_Jpg (FaceFolder.FullName);
+            if (!FaceFolder.Exists) {
+                SimpleLogInfo.Text += "人脸配置文件夹" + FaceFolder.FullName + "不存在！\n";
+                return;
+            }
+            foreach (FileInfo NextFile in FaceFolder.GetFiles ()) {
+                if ((NextFile.Extension.ToLower ().Equals (".jpg") || NextFile.Extension.ToLower ().Equals (".jpeg")) && NextFile.Length < 1024 * 200) {
+                    FaceParam now = new FaceParam (NextFile);
+                    int index = YKTPerson.FindIndex (item => item.Name.Equals (now.faceName));
+                    if (index > -1) {
+                        now.cardNo = YKTPerson[index].CardNo;
+                    }
+                    FaceList.Add (now);
+                }
+            }
+            if (File.Exists(FaceFolder.FullName + "Storage.json")) {
+                try {
+                    using (StreamReader jsonStorage = new StreamReader (FaceFolder.FullName + "Storage.json", Encoding.UTF8)) {
+                        FaceSave = JsonConvert.DeserializeObject<List<FaceParam>> (jsonStorage.ReadToEnd ());
+                    }
+                } catch (Exception ex) {
+                    FaceSave = new List<FaceParam> ();
+                }
+            }
+            if (FaceSave.Count > 0) {
+                foreach (FaceParam now in FaceSave) {
+                    int index = FaceList.FindIndex (item => item.fileMD5.Equals (now.fileMD5));
+                    if (index > -1) {
+                        if (FaceList[index].Equals (now)) { FaceList[index].doNotUpdate (); }
+                    }
+                }
+            }
+            custom_GetSetFaceInfo (FaceList);
+            using (StreamWriter jsonStorage = new StreamWriter (FaceFolder.FullName + "Storage.json", false, Encoding.UTF8)) {
+                jsonStorage.Write (JsonConvert.SerializeObject (FaceList));
+            }
         }
         private void HikLogout_Click (object sender, RoutedEventArgs e) {
             if (UserID > -1) {

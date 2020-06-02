@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:HK_Face"
         mc:Ignorable="d"
-        Title="MainWindow" Width="900" Height="700">
+        Title="MainWindow" Width="900" Height="750">
     <Grid>
         <ScrollViewer Width="650" Height="650" Margin="-225,0,0,0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
             <TextBlock HorizontalAlignment="Stretch" VerticalAlignment="Stretch" TextWrapping="Wrap" Name="SimpleLogInfo"/>
@@ -24,7 +24,7 @@
         <Button Content="监听配置" Margin="570,50,0,0" Width="70" Height="20" Name="HikSDKCfg" Click="HikSDKCfg_Click"/>
         <Button Content="版本信息" Margin="730,50,0,0" Width="70" Height="20" Name="HikSDKInfo" Click="HikSDKInfo_Click"/>
         <Button Content="尝试寻找设备" Margin="650,100,0,0" Width="150" Height="20" Name="HikGetDevice" Click="HikGetDevice_Click"/>
-        <TextBox Text="10.244.99.27" Margin="650,150,0,0" Width="150" Height="20" Name="HikLogin_Address"/>
+        <TextBox Text="192.168.100.159" Margin="650,150,0,0" Width="150" Height="20" Name="HikLogin_Address"/>
         <TextBox Text="8000" Margin="650,200,0,0" Width="150" Height="20" Name="HikLogin_Port"/>
         <TextBox Text="admin" Margin="570,250,0,0" Width="70" Height="20" Name="HikLogin_Username"/>
         <PasswordBox PasswordChar="~" Margin="730,250,0,0" Width="70" Height="20" Name="HikLogin_Password"/>
@@ -33,8 +33,11 @@
         <Button Content="设备能力" Margin="570,400,0,0" Width="70" Height="20" Name="HikAbility" Click="HikAbility_Click"/>
         <Button Content="设备信息" Margin="730,400,0,0" Width="70" Height="20" Name="HikGetConfig" Click="HikGetConfig_Click"/>
         <Button Content="尝试人脸计数" Margin="650,450,0,0" Width="150" Height="20" Name="HikGetCard" Click="HikGetCard_Click"/>
-        <Button Content="新增注册卡" Margin="570,500,0,0" Width="70" Height="20" Name="HikSetCardAdd" Click="HikSetCardAdd_Click"/>
-        <Button Content="合并注册卡" Margin="730,500,0,0" Width="70" Height="20" Name="HikSetCardMix" Click="HikSetCardAdd_Click"/>
-        <Button Content="尝试登出设备" Margin="650,600,0,0" Width="150" Height="20" Name="HikLogout" Click="HikLogout_Click"/>
+        <Button Content="新增注册卡" Margin="650,500,0,0" Width="150" Height="20" Name="HikSetCardAdd" Click="HikSetCardAdd_Click"/>
+        <Button Content="解析人脸" Margin="570,550,0,0" Width="70" Height="20" Name="HikCheckFaceImage" Click="HikCheckFaceImage_click"/>
+        <!--
+            <Button Content="合并注册卡" Margin="730,500,0,0" Width="70" Height="20" Name="HikSetCardMix" Click="HikSetCardAdd_Click"/>
+        -->
+        <Button Content="尝试登出设备" Margin="650,650,0,0" Width="150" Height="20" Name="HikLogout" Click="HikLogout_Click"/>
     </Grid>
 </Window>
